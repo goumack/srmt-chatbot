@@ -14,10 +14,24 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-# Installer les dépendances système nécessaires
+# Installer les dépendances système nécessaires et SQLite >= 3.35.0
 RUN yum update -y && \
-    yum install -y gcc gcc-c++ make && \
+    yum install -y gcc gcc-c++ make wget && \
+    cd /tmp && \
+    wget https://www.sqlite.org/2024/sqlite-autoconf-3460100.tar.gz && \
+    tar xzf sqlite-autoconf-3460100.tar.gz && \
+    cd sqlite-autoconf-3460100 && \
+    ./configure --prefix=/usr/local && \
+    make && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/sqlite-autoconf-3460100* && \
+    echo "/usr/local/lib" > /etc/ld.so.conf.d/sqlite3.conf && \
+    ldconfig && \
     yum clean all
+
+# Configurer les variables d'environnement pour SQLite
+ENV LD_LIBRARY_PATH=/usr/local/lib
 
 # Copier les fichiers de dépendances
 COPY requirements.txt .
