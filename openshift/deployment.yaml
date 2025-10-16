@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: srmt-documind
+  labels:
+    app: srmt-documind
+    app.kubernetes.io/name: srmt-documind
+    app.kubernetes.io/part-of: srmt-chat
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: srmt-documind
+  template:
+    metadata:
+      labels:
+        app: srmt-documind
+    spec:
+      containers:
+      - name: srmt-documind
+        image: srmt-documind:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8505
+          protocol: TCP
+        env:
+        - name: OLLAMA_BASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: srmt-config
+              key: ollama-base-url
+        - name: OLLAMA_CHAT_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: srmt-config
+              key: ollama-chat-model
+        - name: OLLAMA_EMBEDDING_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: srmt-config
+              key: ollama-embedding-model
+        - name: CHROMA_PERSIST_DIRECTORY
+          value: /app/chroma_db
+        - name: WATCH_DIRECTORY
+          value: /app/documents
+        resources:
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+        volumeMounts:
+        - name: chroma-storage
+          mountPath: /app/chroma_db
+        - name: documents-storage
+          mountPath: /app/documents
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8505
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8505
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+      volumes:
+      - name: chroma-storage
+        persistentVolumeClaim:
+          claimName: srmt-chroma-pvc
+      - name: documents-storage
+        persistentVolumeClaim:
+          claimName: srmt-documents-pvc

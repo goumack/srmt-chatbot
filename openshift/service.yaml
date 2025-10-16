@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: srmt-documind
+  labels:
+    app: srmt-documind
+spec:
+  ports:
+  - name: 8505-tcp
+    port: 8505
+    protocol: TCP
+    targetPort: 8505
+  selector:
+    app: srmt-documind
+  type: ClusterIP

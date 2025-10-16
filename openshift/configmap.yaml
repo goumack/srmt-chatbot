@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: srmt-config
+  labels:
+    app: srmt-documind
+data:
+  ollama-base-url: "https://ollamaaccel-chatbotaccel.apps.senum.heritage.africa"
+  ollama-chat-model: "mistral:7b"
+  ollama-embedding-model: "nomic-embed-text"

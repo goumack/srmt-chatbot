@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  srmt-chat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: srmt-documind
+    ports:
+      - "8505:8505"
+    volumes:
+      # Persister la base de données ChromaDB
+      - ./chroma_db:/app/chroma_db
+      # Persister les documents
+      - ./documents:/app/documents
+      # Persister les fichiers statiques
+      - ./static:/app/static
+      - ./templates:/app/templates
+    environment:
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollamaaccel-chatbotaccel.apps.senum.heritage.africa}
+      - OLLAMA_CHAT_MODEL=${OLLAMA_CHAT_MODEL:-mistral:7b}
+      - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      - CHROMA_PERSIST_DIRECTORY=/app/chroma_db
+      - WATCH_DIRECTORY=/app/documents
+    restart: unless-stopped
+    networks:
+      - srmt-network
+
+networks:
+  srmt-network:
+    driver: bridge

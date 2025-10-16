@@ -1,0 +1,2 @@
+# Variables d'environnement pour Source-to-Image (S2I)
+APP_FILE=boutton memoire nouveau .py

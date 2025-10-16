@@ -1,0 +1,9 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: srmt-documind
+  labels:
+    app: srmt-documind
+spec:
+  lookupPolicy:
+    local: false

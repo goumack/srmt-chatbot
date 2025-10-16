@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRMT-DOCUMIND - Assistant Fiscal et Douanier Sénégalais</title>
+    <meta name="theme-color" content="#003366">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/chat.css') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="brand">
+                <img class="logo" src="{{ url_for('static', filename='img/favicon.svg') }}" alt="SRMT" aria-hidden="true"/>
+                <div class="titles">
+                    <div class="app-title">SRMT‑DOCUMIND</div>
+                    <div class="app-subtitle">Assistant fiscal et douanier</div>
+                </div>
+            </div>
+            <button class="theme-toggle" id="theme-toggle" aria-label="Basculer le thème" title="Basculer le thème">
+                <svg class="icon-sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.48 0l1.79-1.8 1.41 1.41-1.8 1.79-1.4-1.4zM12 4V1h0v3zm0 19v-3h0v3zM4 12H1v0h3zm22 0h-3v0h3zM6.76 19.16l-1.42 1.42-1.79-1.8 1.41-1.41 1.8 1.79zm12.89-.38l1.8 1.79-1.41 1.41-1.79-1.8 1.4-1.4zM12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+                <svg class="icon-moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M20.742 13.045A8 8 0 1111 3a7 7 0 009.742 10.045z"/></svg>
+            </button>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="message-container clearfix{% if loop.last %} last{% endif %}">
+                        {% if message.role == 'user' %}
+                            <div class="user-message">{{ message.content }}</div>
+                        {% else %}
+                            <div class="bot-message">
+                                {{ message.content | safe }}
+                                {% if message.references %}
+                                    <div class="references-container">
+                                        {% for ref in message.references %}
+                                            <div class="document-reference" onclick="showDocReference('ref-{{ loop.index }}')">
+                                                {{ ref }}
+                                            </div>
+                                            <div id="ref-{{ loop.index }}" class="reference-details" style="display: none;">
+                                                {{ message.reference_details[loop.index0] }}
+                                            </div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            {% else %}
+                <div class="message-container clearfix last">
+                    <div class="bot-message">
+                        Bienvenue sur SRMT-DOCUMIND, votre assistant fiscal et douanier sénégalais. 
+                        Je réponds à vos questions en me basant exclusivement sur les textes officiels (Code Général des Impôts, Code des Douanes, etc.).
+                        Comment puis-je vous aider aujourd'hui?
+                    </div>
+                </div>
+                <div class="chat-buttons-container">
+                    <button class="chat-button" onclick="document.getElementById('message-input').value='Quelles sont les principales taxes au Sénégal?'; document.getElementById('chat-form').submit();">Principales taxes au Sénégal</button>
+                    <button class="chat-button" onclick="document.getElementById('message-input').value='Comment déclarer la TVA?'; document.getElementById('chat-form').submit();">Déclaration TVA</button>
+                    <button class="chat-button" onclick="document.getElementById('message-input').value='Quelles sont les exonérations fiscales pour les entreprises?'; document.getElementById('chat-form').submit();">Exonérations fiscales</button>
+                </div>
+            {% endif %}
+            
+            <div id="loading-indicator" class="loading-indicator" style="display: none;">
+                <div class="loading-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+                <p>Recherche dans la documentation fiscale...</p>
+            </div>
+
+            <button id="scroll-bottom" class="scroll-bottom" type="button" aria-label="Aller au dernier message" title="Aller en bas">▼</button>
+        </div>
+        
+        <div class="chat-input-container">
+            <form id="chat-form" method="post" action="/" onsubmit="return submitMessage();">
+                <input type="text" id="message-input" name="message" class="chat-input" placeholder="Posez votre question fiscale ou douanière..." autocomplete="off">
+                <button type="submit" id="send-button" class="send-button">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M22 2L11 13" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+</body>
+</html>
