@@ -137,12 +137,18 @@ dmypy.json
 chroma_db/
 
 # Documents - peuvent contenir des données sensibles
-documents/
-*.pdf
-*.docx
-*.xlsx
-*.xls
-*.csv
+# EXCEPTION: Garder les documents fiscaux essentiels
+# documents/
+# *.pdf
+# *.docx
+# *.xlsx
+# *.xls
+# *.csv
+
+# Ignorer seulement les documents de test/backup
+documents/backup/
+documents/test/
+documents/temp/
 
 # Backups
 backup/
