@@ -1,5 +1,5 @@
 """
-LexFin - Assistant IA Spécialisé Fiscal et Douanier (MODE RAG STRICT)
+SRMT-DOCUMIND - Assistant IA Spécialisé Fiscal et Douanier (MODE RAG STRICT)
 Assistant IA intelligent pour les contribuables sénégalais
 Focalisé exclusivement sur les documents fiscaux et douaniers indexés
 Version optimisée - Mode RAG strict - Réponses basées uniquement sur les documents
@@ -19,17 +19,6 @@ import hashlib
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import re
-from collections import Counter
-import math
-
-# Import du système hiérarchique V2.0 (import conditionnel pour éviter circularité)
-try:
-    from systeme_hierarchique_v2 import HierarchieJuridiqueClient
-    HIERARCHIE_AVAILABLE = True
-except ImportError:
-    HIERARCHIE_AVAILABLE = False
-    HierarchieJuridiqueClient = None
 
 # Configuration des logs
 logging.basicConfig(level=logging.INFO)
@@ -38,61 +27,8 @@ logger = logging.getLogger(__name__)
 # Charger la configuration
 load_dotenv()
 
-class BM25:
-    """Implémentation simple de BM25 pour recherche textuelle"""
-    def __init__(self, k1=1.5, b=0.75):
-        self.k1 = k1
-        self.b = b
-        
-    def tokenize(self, text):
-        """Tokenize le texte en mots"""
-        text = text.lower()
-        # Garder les chiffres et lettres
-        tokens = re.findall(r'\b\w+\b', text)
-        return tokens
-    
-    def compute_idf(self, documents):
-        """Calcule l'IDF pour chaque terme"""
-        N = len(documents)
-        idf = {}
-        
-        # Compter dans combien de documents chaque terme apparaît
-        df = Counter()
-        for doc in documents:
-            tokens = set(self.tokenize(doc))
-            df.update(tokens)
-        
-        # Calculer IDF
-        for term, freq in df.items():
-            idf[term] = math.log((N - freq + 0.5) / (freq + 0.5) + 1)
-        
-        return idf
-    
-    def score(self, query, document, avg_doc_len, idf):
-        """Calcule le score BM25 pour un document"""
-        query_tokens = self.tokenize(query)
-        doc_tokens = self.tokenize(document)
-        doc_len = len(doc_tokens)
-        
-        score = 0.0
-        doc_term_freq = Counter(doc_tokens)
-        
-        for term in query_tokens:
-            if term not in idf:
-                continue
-                
-            tf = doc_term_freq.get(term, 0)
-            
-            # BM25 formula
-            numerator = tf * (self.k1 + 1)
-            denominator = tf + self.k1 * (1 - self.b + self.b * (doc_len / avg_doc_len))
-            
-            score += idf[term] * (numerator / denominator)
-        
-        return score
-
-class LexFinConfig:
-    """Configuration LexFin - Assistant Fiscal et Douanier"""
+class SrmtDocumindConfig:
+    """Configuration SRMT-DOCUMIND - Assistant Fiscal et Douanier"""
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ollamaaccel-chatbotaccel.apps.senum.heritage.africa")
     OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "mistral:7b")
     OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
@@ -103,8 +39,8 @@ class LexFinConfig:
 class DocumentWatcherHandler(FileSystemEventHandler):
     """Gestionnaire de surveillance automatique en arrière-plan"""
     
-    def __init__(self, lexfin_client):
-        self.lexfin_client = lexfin_client
+    def __init__(self, srmt_client):
+        self.srmt_client = srmt_client
         self.processing_queue = []
         self.last_processed = {}
         super().__init__()
@@ -125,8 +61,8 @@ class DocumentWatcherHandler(FileSystemEventHandler):
         def delayed_process():
             try:
                 time.sleep(2)  # Attendre que le fichier soit complètement écrit
-                if self.lexfin_client.is_supported_file(file_path):
-                    self.lexfin_client.process_new_file_background(file_path)
+                if self.srmt_client.is_supported_file(file_path):
+                    self.srmt_client.process_new_file_background(file_path)
                     logger.info(f" [AUTO] Fichier indexé automatiquement: {Path(file_path).name}")
                 else:
                     logger.debug(f"⏭ [AUTO] Fichier ignoré (format non supporté): {Path(file_path).name}")
@@ -160,8 +96,8 @@ class DocumentWatcherHandler(FileSystemEventHandler):
             def delayed_reprocess():
                 try:
                     time.sleep(1)  # Attendre la fin de l'écriture
-                    if self.lexfin_client.is_supported_file(file_path):
-                        self.lexfin_client.process_modified_file_background(file_path)
+                    if self.srmt_client.is_supported_file(file_path):
+                        self.srmt_client.process_modified_file_background(file_path)
                         logger.info(f" [AUTO] Fichier réindexé automatiquement: {Path(file_path).name}")
                 except Exception as e:
                     logger.error(f" [AUTO] Erreur réindexation automatique {Path(file_path).name}: {e}")
@@ -170,19 +106,15 @@ class DocumentWatcherHandler(FileSystemEventHandler):
             thread = threading.Thread(target=delayed_reprocess, daemon=True)
             thread.start()
 
-class LexFinClient:
-    """Client LexFin optimisé avec surveillance automatique pour la fiscalité et douanes sénégalaises"""
+class SrmtDocumindClient:
+    """Client SRMT-DOCUMIND optimisé avec surveillance automatique pour la fiscalité et douanes sénégalaises"""
     
     def __init__(self):
-        self.config = LexFinConfig()
+        self.config = SrmtDocumindConfig()
         self.indexed_files = {}  # Cache des fichiers indexés {path: hash}
         self.observer = None  # Référence au watcher
         self.setup_chroma()
         self.setup_watch_directory()
-        
-        # Initialiser le système hiérarchique V2.0 (à la demande)
-        self.hierarchie_client = None
-        self._hierarchie_initialized = False
         
         # Démarrer automatiquement la surveillance en arrière-plan
         surveillance_ok = False
@@ -197,67 +129,23 @@ class LexFinClient:
             logger.info("   DOCUMIND initialisé - Mode manuel activé")
     
     def setup_chroma(self):
-        """Initialise ChromaDB avec gestion automatique de la dimension d'embeddings"""
+        """Initialise ChromaDB"""
         try:
             self.chroma_client = chromadb.PersistentClient(
                 path=self.config.CHROMA_PERSIST_DIRECTORY,
                 settings=Settings(allow_reset=True, anonymized_telemetry=False)
             )
             
-            collection_found = False
-            
-            # Essayer de récupérer une collection existante
-            for collection_name in ["alex_documents", "alex_pro_docs"]:
+            try:
+                self.collection = self.chroma_client.get_collection("alex_documents")
+            except:
                 try:
-                    self.collection = self.chroma_client.get_collection(collection_name)
-                    collection_found = True
-                    logger.info(f"✅ Collection trouvée: {collection_name}")
-                    
-                    # Tester la compatibilité des embeddings
-                    try:
-                        test_embedding = self.generate_embeddings("test")
-                        if test_embedding:
-                            # Test avec un petit échantillon
-                            self.collection.query(
-                                query_embeddings=[test_embedding],
-                                n_results=1
-                            )
-                            logger.info(f"✅ Dimension d'embeddings compatible: {len(test_embedding)}")
-                            break
-                    except Exception as dim_error:
-                        if "dimension" in str(dim_error).lower():
-                            logger.warning(f"⚠️ Incompatibilité dimension embeddings détectée: {dim_error}")
-                            logger.info(f"🔄 Recréation de la collection {collection_name} nécessaire...")
-                            
-                            # Supprimer l'ancienne collection
-                            self.chroma_client.delete_collection(collection_name)
-                            
-                            # Créer une nouvelle collection
-                            self.collection = self.chroma_client.create_collection(
-                                name=collection_name,
-                                metadata={"description": "Documents ALEX - Nouvelle dimension embeddings"}
-                            )
-                            
-                            # Réinitialiser le cache des fichiers indexés
-                            self.indexed_files = {}
-                            
-                            logger.info(f"✅ Collection {collection_name} recréée avec nouvelle dimension")
-                            break
-                        else:
-                            raise dim_error
-                            
-                except Exception as e:
-                    if "does not exist" not in str(e).lower():
-                        logger.warning(f"Erreur collection {collection_name}: {e}")
-                    continue
-            
-            # Si aucune collection trouvée, en créer une nouvelle
-            if not collection_found or not self.collection:
-                self.collection = self.chroma_client.create_collection(
-                    name="alex_pro_docs",
-                    metadata={"description": "Documents ALEX - Nouvelle installation"}
-                )
-                logger.info("✅ Nouvelle collection créée: alex_pro_docs")
+                    self.collection = self.chroma_client.get_collection("alex_pro_docs")
+                except:
+                    self.collection = self.chroma_client.create_collection(
+                        name="alex_pro_docs",
+                        metadata={"description": "Documents ALEX"}
+                    )
             
             # Charger la liste des fichiers déjà indexés
             self.load_indexed_files_cache()
@@ -381,20 +269,9 @@ class LexFinClient:
                     for metadata in results['metadatas']:
                         if metadata and 'file_path' in metadata and 'file_hash' in metadata:
                             self.indexed_files[metadata['file_path']] = metadata['file_hash']
-                    
-                    cache_count = len(self.indexed_files)
-                    logger.info(f"📚 Cache chargé: {cache_count} fichiers indexés")
-                    
-                    # Si la collection était vide (recréée), forcer la réindexation
-                    if cache_count == 0:
-                        logger.info("🔄 Collection vide détectée - Réindexation des documents nécessaire")
-                        self.indexed_files = {}  # Vider le cache pour forcer la réindexation
-                else:
-                    logger.info("📚 Collection vide - Tous les fichiers seront indexés")
-                    self.indexed_files = {}
+                logger.info(f"📚 Cache chargé: {len(self.indexed_files)} fichiers indexés")
         except Exception as e:
             logger.error(f"Erreur chargement cache: {e}")
-            self.indexed_files = {}
     
     def get_file_hash(self, file_path: str) -> str:
         """Calcule le hash MD5 d'un fichier"""
@@ -913,12 +790,6 @@ class LexFinClient:
                     
                     full_ref = " > ".join(ref_parts) if ref_parts else article_ref
                     
-                    # 🔧 CORRECTION OCR: Normaliser les espaces dans les numéros d'articles
-                    # Exemple: "Article 4 12" → "Article 412"
-                    import re
-                    full_ref_normalized = re.sub(r'Article\s+(\d+)\s+(\d+)', r'Article \1\2', full_ref)
-                    article_number_normalized = re.sub(r'Article\s+(\d+)\s+(\d+)', r'Article \1\2', current_article)
-                    
                     chunks.append({
                         'text': chunk_text,
                         'file_path': file_path,
@@ -928,9 +799,8 @@ class LexFinClient:
                         'line_end': line_end,
                         'page_start': page_start,
                         'page_end': page_end,
-                        'article_ref': full_ref_normalized,  # Version corrigée
-                        'article_ref_original': full_ref,     # Version originale conservée
-                        'article_number': article_number_normalized,
+                        'article_ref': full_ref,
+                        'article_number': current_article,
                         'section': current_section,
                         'sous_section': current_sous_section,
                         'chapitre': current_chapitre,
@@ -1056,335 +926,14 @@ class LexFinClient:
         logger.error(f"💥 Échec génération embedding après {max_retries + 1} tentatives")
         return []
     
-    def detect_legal_code_type(self, query: str) -> str:
-        """EXPERTISE : Détecte le type de code juridique (CGI, Code des Douanes, etc.)"""
-        query_lower = query.lower()
-        
-        # Indicateurs pour le Code Général des Impôts (CGI)
-        cgi_indicators = [
-            'code général des impôts', 'code general des impots', 'cgi',
-            'impôt', 'impot', 'fiscal', 'fiscale', 'contribuable', 'tva',
-            'bénéfices imposables', 'benefices imposables', 'personnes imposables',
-            'champ d\'application', 'société', 'sociétés', 'is', 'ir', 'ircm',
-            'base imposable', 'assiette fiscale', 'déclaration de revenus'
-        ]
-        
-        # Indicateurs pour le Code des Douanes
-        douane_indicators = [
-            'code des douanes', 'douane', 'douanes', 'douanier', 'douanière',
-            'importation', 'exportation', 'marchandise', 'marchandises',
-            'dédouanement', 'transit', 'bureau de douane', 'tarif douanier',
-            'nomenclature', 'espèce d\'une marchandise', 'origine des marchandises'
-        ]
-        
-        # Calculer les scores
-        cgi_score = sum(1 for indicator in cgi_indicators if indicator in query_lower)
-        douane_score = sum(1 for indicator in douane_indicators if indicator in query_lower)
-        
-        if cgi_score > douane_score:
-            return "Code Général des Impôts (CGI)"
-        elif douane_score > cgi_score:
-            return "Code des Douanes"
-        else:
-            return "Code Général (indéterminé)"
-    
-    def analyze_hierarchical_context(self, query: str) -> Dict:
-        """EXPERTISE : Analyse le contexte hiérarchique demandé (Section, Sous-section, Chapitre, etc.)"""
-        query_lower = query.lower()
-        context = {
-            'section': None,
-            'sous_section': None,
-            'chapitre': None,
-            'titre': None,
-            'theme': None
-        }
-        
-        # Détecter BENEFICES IMPOSABLES - patterns plus précis
-        if any(term in query_lower for term in ['benefices', 'bénéfices']) and 'imposables' in query_lower:
-            context['section'] = "SECTION II. BENEFICES IMPOSABLES"
-            context['theme'] = "bénéfices imposables"
-            logger.info(f"🎯 Section détectée: BENEFICES IMPOSABLES")
-        
-        # Détecter DETERMINATION DU BENEFICE NET IMPOSABLE
-        if any(term in query_lower for term in ['determination', 'détermination']) and any(term in query_lower for term in ['benefice', 'bénéfice']):
-            context['sous_section'] = "Sous-section 1. DETERMINATION DU BENEFICE NET IMPOSABLE"
-            context['theme'] = "détermination du bénéfice net imposable"
-            logger.info(f"🎯 Sous-section détectée: DETERMINATION DU BENEFICE NET IMPOSABLE")
-        
-        # Détecter PERIODE D'IMPOSITION
-        if any(term in query_lower for term in ['periode', 'période']) and 'imposition' in query_lower:
-            context['theme'] = "période d'imposition"
-            if not context['section']:
-                context['section'] = "SECTION II. BENEFICES IMPOSABLES"
-            if not context['sous_section']:
-                context['sous_section'] = "Sous-section 1. DETERMINATION DU BENEFICE NET IMPOSABLE"
-            logger.info(f"🎯 Thème détecté: période d'imposition")
-        
-        # Détecter les structures hiérarchiques explicites
-        if 'section' in query_lower:
-            # Extraire la section mentionnée
-            if 'champ d\'application' in query_lower or 'personnes imposables' in query_lower:
-                context['section'] = "SECTION I. CHAMP D'APPLICATION"
-                context['theme'] = "personnes imposables"
-            elif not context['section']:  # Si pas déjà détecté
-                if 'tva' in query_lower or 'taxe sur la valeur ajoutée' in query_lower:
-                    context['section'] = "SECTION TVA"
-                    context['theme'] = "taxe sur la valeur ajoutée"
-        
-        if 'sous-section' in query_lower or 'sous section' in query_lower:
-            if 'personnes imposables' in query_lower:
-                context['sous_section'] = "Sous-section 1. PERSONNES IMPOSABLES"
-        
-        # Détecter les thèmes implicites basés sur les mots-clés
-        if not context['theme']:
-            if any(term in query_lower for term in ['société', 'sociétés', 'sarl', 'sa', 'sas']):
-                context['theme'] = "sociétés"
-            elif any(term in query_lower for term in ['base', 'assiette', 'calcul']):
-                context['theme'] = "base imposable"
-        
-        return context
-    
-    def build_expert_search_strategy(self, article_num: str, code_type: str, hierarchical_context: Dict, query: str) -> List[str]:
-        """EXPERTISE : Construit une stratégie de recherche experte basée sur la structure juridique"""
-        search_terms = []
-        query_lower = query.lower()
-        
-        # Stratégie de base
-        search_terms.extend([
-            f"Article {article_num}",
-            f"Article {article_num}.",
-            query  # Requête complète de l'utilisateur
-        ])
-        
-        # Stratégie spécialisée par code juridique
-        if code_type == "Code Général des Impôts (CGI)":
-            search_terms.extend(self._build_cgi_search_terms(article_num, hierarchical_context, query_lower))
-        elif code_type == "Code des Douanes":
-            search_terms.extend(self._build_douane_search_terms(article_num, hierarchical_context, query_lower))
-        
-        # Stratégie hiérarchique intelligente
-        if hierarchical_context['section']:
-            search_terms.append(f"{hierarchical_context['section']} Article {article_num}")
-        
-        if hierarchical_context['sous_section']:
-            search_terms.append(f"{hierarchical_context['sous_section']} Article {article_num}")
-        
-        if hierarchical_context['theme']:
-            search_terms.extend([
-                f"Article {article_num} {hierarchical_context['theme']}",
-                f"{hierarchical_context['theme']} Article {article_num}"
-            ])
-        
-        return search_terms
-    
-    def _build_cgi_search_terms(self, article_num: str, context: Dict, query_lower: str) -> List[str]:
-        """Construit des termes de recherche spécialisés pour le CGI"""
-        terms = []
-        
-        # Article 4 CGI - Personnes imposables
-        if article_num == "4" and any(term in query_lower for term in ['champ', 'application', 'personnes', 'imposables']):
-            terms.extend([
-                f"SECTION I. CHAMP D'APPLICATION Article {article_num}",
-                f"Sous-section 1. PERSONNES IMPOSABLES Article {article_num}",
-                f"Article {article_num}. I. (Loi",  # Pattern spécifique CGI
-                f"Les sociétés par actions Article {article_num}",
-                f"sociétés à responsabilité limitée Article {article_num}"
-            ])
-        
-        # Article 7 CGI - Bénéfices imposables / Période d'imposition (PRIORITÉ ABSOLUE)
-        elif article_num == "7":
-            # Si le contexte indique bénéfices imposables, forcer cette recherche
-            if context.get('section') == "SECTION II. BENEFICES IMPOSABLES" or any(term in query_lower for term in ['benefices', 'bénéfices']):
-                terms.extend([
-                    f"SECTION II. BENEFICES IMPOSABLES Article {article_num}",
-                    f"Sous-section 1. DETERMINATION DU BENEFICE NET IMPOSABLE Article {article_num}",
-                    f"Article {article_num}. Période d'imposition",
-                    f"Période d'imposition Article {article_num}",
-                    f"BENEFICES IMPOSABLES Article {article_num}",
-                    f"DETERMINATION DU BENEFICE NET IMPOSABLE Article {article_num}",
-                    f"exercice comptable Article {article_num}",
-                    f"exercice précédent Article {article_num}",
-                    f"comptes à la date du 31 décembre Article {article_num}",
-                    f"bénéfices réalisés Article {article_num}"
-                ])
-                logger.info(f"🎯 Recherche spécialisée Article 7 BENEFICES IMPOSABLES activée")
-            else:
-                # Recherche générale pour Article 7
-                terms.extend([
-                    f"Article {article_num}. Période d'imposition",
-                    f"Période d'imposition Article {article_num}"
-                ])
-        
-        # Articles TVA
-        elif any(term in query_lower for term in ['tva', 'taxe', 'valeur', 'ajoutée']):
-            terms.extend([
-                f"TVA Article {article_num}",
-                f"Taxe sur la valeur ajoutée Article {article_num}",
-                f"Article {article_num} assujetti",
-                f"Article {article_num} redevable"
-            ])
-        
-        return terms
-    
-    def _build_douane_search_terms(self, article_num: str, context: Dict, query_lower: str) -> List[str]:
-        """Construit des termes de recherche spécialisés pour le Code des Douanes"""
-        terms = []
-        
-        # Termes généraux douaniers
-        terms.extend([
-            f"Article {article_num} marchandise",
-            f"Article {article_num} importation", 
-            f"Article {article_num} exportation",
-            f"Article {article_num} dédouanement",
-            f"Article {article_num} bureau de douane"
-        ])
-        
-        # Contexte spécialisé selon la requête
-        if 'marchandise' in query_lower:
-            terms.extend([
-                f"espèce d'une marchandise Article {article_num}",
-                f"classification Article {article_num}",
-                f"nomenclature Article {article_num}"
-            ])
-        
-        if 'tarif' in query_lower or 'droit' in query_lower:
-            terms.extend([
-                f"tarif douanier Article {article_num}",
-                f"droit de douane Article {article_num}"
-            ])
-        
-        return terms
-    
-    def calculate_expert_priority_score(self, doc: str, metadata: Dict, article_num: str, 
-                                       code_type: str, hierarchical_context: Dict, query_lower: str) -> int:
-        """EXPERTISE : Calcule un score de priorité basé sur l'expertise juridique"""
-        priority_score = 0
-        doc_lower = doc.lower()
-        
-        # Score de base pour correspondance d'article exact
-        if f"article {article_num}" in doc_lower:
-            priority_score += 10
-        
-        # EXPERTISE CGI
-        if code_type == "Code Général des Impôts (CGI)":
-            priority_score += self._calculate_cgi_expertise_score(doc_lower, metadata, article_num, hierarchical_context, query_lower)
-        
-        # EXPERTISE Code des Douanes  
-        elif code_type == "Code des Douanes":
-            priority_score += self._calculate_douane_expertise_score(doc_lower, metadata, article_num, hierarchical_context, query_lower)
-        
-        # Score contextuel intelligent
-        query_keywords = set(word for word in query_lower.split() if len(word) > 2)
-        doc_keywords = set(word for word in doc_lower.split() if len(word) > 2)
-        
-        # Correspondance sémantique
-        keyword_overlap = len(query_keywords.intersection(doc_keywords))
-        priority_score += keyword_overlap * 3
-        
-        # Bonus pour structure hiérarchique
-        hierarchical_terms = ['section', 'sous-section', 'chapitre', 'titre']
-        hierarchical_bonus = sum(2 for term in hierarchical_terms if term in doc_lower)
-        priority_score += hierarchical_bonus
-        
-        return priority_score
-    
-    def _calculate_cgi_expertise_score(self, doc_lower: str, metadata: Dict, article_num: str, context: Dict, query_lower: str) -> int:
-        """Score d'expertise spécialisé CGI"""
-        score = 0
-        
-        # Article 4 CGI - Expertise personnes imposables
-        if article_num == "4" and any(term in query_lower for term in ['champ', 'application', 'personnes', 'imposables']):
-            if any(term in doc_lower for term in [
-                'personnes imposables', 'champ d\'application', 'section i',
-                'sociétés par actions', 'responsabilité limitée', 'impôt sur les sociétés'
-            ]):
-                score += 20
-                logger.info(f"🎯 Expertise CGI Article 4 - Personnes imposables (+20)")
-        
-        # Article 7 CGI - PRIORITÉ ABSOLUE pour bénéfices imposables
-        elif article_num == "7":
-            # Si la requête mentionne explicitement bénéfices imposables
-            if any(term in query_lower for term in ['benefices', 'bénéfices']) and 'imposables' in query_lower:
-                if any(term in doc_lower for term in [
-                    'bénéfices imposables', 'benefices imposables', 'section ii',
-                    'determination du benefice', 'détermination du bénéfice',
-                    'exercice précédent', 'comptes à la date du 31 décembre'
-                ]):
-                    score += 50  # SCORE MAXIMAL pour le bon Article 7
-                    logger.info(f"🎯 PRIORITÉ ABSOLUE Article 7 - BENEFICES IMPOSABLES (+50)")
-                else:
-                    # Pénalité sévère pour mauvais Article 7 (ex: méthode cadastrale)
-                    score -= 30
-                    logger.info(f"⛔ Pénalité Article 7 non-bénéfices imposables (-30)")
-            
-            # Si période d'imposition est mentionnée
-            elif any(term in query_lower for term in ['periode', 'période']) and 'imposition' in query_lower:
-                if 'période d\'imposition' in doc_lower or 'periode d\'imposition' in doc_lower:
-                    score += 40
-                    logger.info(f"🎯 Article 7 - Période d'imposition (+40)")
-                elif any(term in doc_lower for term in ['exercice précédent', 'exercice comptable', '31 décembre']):
-                    score += 35
-                    logger.info(f"🎯 Article 7 - Contexte période (+35)")
-                else:
-                    score -= 25  # Pénalité pour mauvais Article 7
-                    logger.info(f"⛔ Pénalité Article 7 hors période d'imposition (-25)")
-            
-            # Si détermination du bénéfice
-            elif any(term in query_lower for term in ['determination', 'détermination']) and any(term in query_lower for term in ['benefice', 'bénéfice']):
-                if any(term in doc_lower for term in [
-                    'determination du benefice', 'détermination du bénéfice',
-                    'benefice net imposable', 'bénéfice net imposable'
-                ]):
-                    score += 45
-                    logger.info(f"🎯 Article 7 - Détermination bénéfice (+45)")
-                else:
-                    score -= 20
-                    logger.info(f"⛔ Pénalité Article 7 hors détermination bénéfice (-20)")
-        
-        # Expertise TVA
-        elif any(term in query_lower for term in ['tva', 'taxe']):
-            if any(term in doc_lower for term in ['tva', 'taxe sur la valeur ajoutée', 'assujetti', 'redevable']):
-                score += 15
-                logger.info(f"🎯 Expertise CGI TVA (+15)")
-        
-        return score
-    
-    def _calculate_douane_expertise_score(self, doc_lower: str, metadata: Dict, article_num: str, context: Dict, query_lower: str) -> int:
-        """Score d'expertise spécialisé Code des Douanes"""
-        score = 0
-        
-        # Expertise marchandises
-        if 'marchandise' in query_lower:
-            if any(term in doc_lower for term in ['marchandise', 'classification', 'nomenclature', 'espèce']):
-                score += 20
-                logger.info(f"🎯 Expertise Douanes - Marchandises (+20)")
-        
-        # Expertise importation/exportation
-        if any(term in query_lower for term in ['importation', 'exportation']):
-            if any(term in doc_lower for term in ['importation', 'exportation', 'bureau de douane', 'transit']):
-                score += 18
-                logger.info(f"🎯 Expertise Douanes - Import/Export (+18)")
-        
-        # Expertise tarifs douaniers
-        if any(term in query_lower for term in ['tarif', 'droit']):
-            if any(term in doc_lower for term in ['tarif douanier', 'droit de douane', 'perception']):
-                score += 16
-                logger.info(f"🎯 Expertise Douanes - Tarifs (+16)")
-        
-        return score
-
     def deduplicate_references(self, references: List[Dict]) -> List[Dict]:
-        """Déduplique les références intelligemment en gardant les plus pertinentes (score hybride)"""
+        """Déduplique les références intelligemment pour éviter les répétitions"""
         if not references:
             return []
         
-        # IMPORTANT: Trier par score AVANT toute opération pour garder les meilleurs
-        # Le score hybride est dans '_score' - tri décroissant (meilleur score d'abord)
-        references_sorted = sorted(references, key=lambda x: x.get('_score', 0), reverse=True)
-        
-        # Grouper par fichier
+        # Grouper par fichier d'abord
         file_groups = {}
-        for ref in references_sorted:  # Utiliser la liste triée par score
+        for ref in references:
             file_name = ref.get('file_name', 'unknown')
             if file_name not in file_groups:
                 file_groups[file_name] = []
@@ -1393,23 +942,71 @@ class LexFinClient:
         deduplicated = []
         
         for file_name, file_refs in file_groups.items():
-            # Les références sont déjà triées par score global
-            # On garde juste les meilleures sans fusionner (pour garder la précision)
+            # Trier par page puis par ligne pour chaque fichier
+            file_refs.sort(key=lambda x: (x.get('page_start', 1), x.get('line_start', 1)))
             
-            # Limiter à un nombre raisonnable par fichier TOUT EN GARDANT LES MEILLEURS
-            # Augmenté à 5 pour permettre plus de diversité (au lieu de 2)
-            max_refs_per_file = 5
-            top_refs = file_refs[:max_refs_per_file]
+            # Fusionner les références proches dans le même fichier
+            merged_refs = []
+            current_ref = None
             
-            deduplicated.extend(top_refs)
+            for ref in file_refs:
+                page_start = ref.get('page_start', 1)
+                line_start = ref.get('line_start', 1)
+                
+                if current_ref is None:
+                    current_ref = ref.copy()
+                    merged_refs.append(current_ref)
+                else:
+                    # Vérifier si cette référence est proche de la précédente
+                    prev_page = current_ref.get('page_start', 1)
+                    prev_line = current_ref.get('line_start', 1)
+                    
+                    # Si même page et lignes proches (< 50 lignes d'écart), fusionner
+                    if (page_start == prev_page and abs(line_start - prev_line) < 50) or \
+                       (abs(page_start - prev_page) <= 1 and abs(line_start - prev_line) < 100):
+                        
+                        # Fusionner: étendre la zone et combiner les snippets
+                        current_ref['line_end'] = max(current_ref.get('line_end', line_start), ref.get('line_end', line_start))
+                        current_ref['page_end'] = max(current_ref.get('page_end', page_start), ref.get('page_end', page_start))
+                        
+                        # Mettre à jour la localisation
+                        if current_ref['line_start'] == current_ref['line_end']:
+                            current_ref['location'] = f"ligne {current_ref['line_start']}"
+                        else:
+                            current_ref['location'] = f"lignes {current_ref['line_start']}-{current_ref['line_end']}"
+                            
+                        if current_ref['page_start'] == current_ref['page_end']:
+                            current_ref['page_info'] = f"page {current_ref['page_start']}"
+                        else:
+                            current_ref['page_info'] = f"pages {current_ref['page_start']}-{current_ref['page_end']}"
+                        
+                        # Garder le snippet le plus représentatif
+                        if len(ref.get('snippet', '')) > len(current_ref.get('snippet', '')):
+                            current_ref['snippet'] = ref['snippet']
+                        
+                        logger.debug(f"🔗 Références fusionnées dans {file_name}: {current_ref['location']}")
+                    else:
+                        # Nouvelle zone distincte
+                        current_ref = ref.copy()
+                        merged_refs.append(current_ref)
+                        logger.debug(f"➕ Nouvelle référence dans {file_name}: {ref.get('location')}")
             
-            logger.debug(f"� {file_name}: gardé top {len(top_refs)} références (score: {top_refs[0].get('_score', 0):.3f} à {top_refs[-1].get('_score', 0) if top_refs else 0:.3f})")
+            deduplicated.extend(merged_refs)
         
-        # Retrier par score global après déduplication
-        deduplicated.sort(key=lambda x: x.get('_score', 0), reverse=True)
+        # Limiter à un nombre raisonnable par fichier (max 2 références par fichier)
+        final_refs = []
+        file_count = {}
         
-        logger.info(f"🔧 Déduplication intelligente: {len(references)} → {len(deduplicated)} références optimisées (triées par score)")
-        return deduplicated
+        for ref in deduplicated:
+            file_name = ref.get('file_name', 'unknown')
+            file_count[file_name] = file_count.get(file_name, 0)
+            
+            if file_count[file_name] < 2:  # Max 2 références par fichier
+                final_refs.append(ref)
+                file_count[file_name] += 1
+        
+        logger.info(f"🔧 Déduplication intelligente: {len(references)} → {len(final_refs)} références optimisées")
+        return final_refs
 
     def detect_query_domain(self, query: str) -> str:
         """Détecte si la question porte sur les impôts, les douanes, ou les deux"""
@@ -1418,7 +1015,7 @@ class LexFinClient:
         # Mots-clés spécifiques aux technologies non fiscales
         non_fiscal_keywords = [
             'openshift', 'kubernetes', 'docker', 'flutter', 'android', 'ios', 
-            'programmation', 'développement', 'application mobile', 'mobile app', 
+            'programmation', 'développement', 'application mobile', 'app', 
             'python', 'javascript', 'développer', 'programmer', 'coder',
             'web', 'site web', 'déployer', 'cloud', 'aws', 'azure', 'git',
             'github', 'windows', 'linux', 'mac', 'apple', 'iphone', 'samsung',
@@ -1426,17 +1023,10 @@ class LexFinClient:
         ]
         
         # Vérifier d'abord si c'est une question clairement non fiscale
-        # Mais éviter les faux positifs avec des termes fiscaux
-        fiscal_context_detected = any(term in query_lower for term in [
-            'article', 'code', 'impot', 'impôt', 'fiscal', 'douane', 'tva', 
-            'champ d\'application', 'personnes imposables', 'contribuable'
-        ])
-        
-        if not fiscal_context_detected:
-            for keyword in non_fiscal_keywords:
-                if keyword in query_lower:
-                    logger.info(f"🚫 Question NON FISCALE détectée: {keyword}")
-                    return "non_fiscal"
+        for keyword in non_fiscal_keywords:
+            if keyword in query_lower:
+                logger.info(f"🚫 Question NON FISCALE détectée: {keyword}")
+                return "non_fiscal"
         
         # Mots-clés spécifiques aux impôts
         impots_keywords = [
@@ -1498,43 +1088,13 @@ class LexFinClient:
             logger.info(f"🔄 Question GÉNÉRALE ou ambiguë (impôts: {impots_score}, douanes: {douanes_score})")
             return "general"
 
-    def _init_hierarchie_client(self):
-        """Initialise le système hiérarchique à la demande"""
-        if not self._hierarchie_initialized and HIERARCHIE_AVAILABLE:
-            try:
-                self.hierarchie_client = HierarchieJuridiqueClient(base_client=self)
-                logger.info("✅ Système hiérarchique V2.0 initialisé à la demande")
-                self._hierarchie_initialized = True
-            except Exception as e:
-                logger.warning(f"⚠️ Erreur initialisation système hiérarchique: {e}")
-                self._hierarchie_initialized = True  # Éviter de retry
-        elif not HIERARCHIE_AVAILABLE:
-            logger.warning("⚠️ Système hiérarchique V2.0 non disponible")
-            self._hierarchie_initialized = True
-
     def  search_context_with_references(self, query: str, limit: int = 5) -> Dict:
-        """Recherche hybride avec système hiérarchique V2.0 en priorité"""
+        """Recherche le contexte avec références précises et déduplication intelligente"""
         if not self.collection:
             logger.warning("  Aucune collection ChromaDB disponible")
             return {"context": "", "references": []}
         
         try:
-            # 🔥 TEMPORAIRE: Désactiver le système hiérarchique pour corriger les références
-            # self._init_hierarchie_client()  # Initialiser à la demande
-            
-            # if self.hierarchie_client:
-            #     logger.info("🏛️ Utilisation du système hiérarchique V2.0")
-            #     hierarchie_result = self.hierarchie_client.rechercher_hierarchique(query)
-            #     
-            #     if hierarchie_result.get("context") and hierarchie_result.get("references"):
-            #         logger.info(f"✅ Résultat hiérarchique trouvé: {hierarchie_result.get('type_recherche', 'N/A')}")
-            #         return hierarchie_result
-            #     else:
-            #         logger.info("⚠️ Système hiérarchique: aucun résultat, fallback vers recherche classique")
-            
-            # Utiliser directement la recherche classique qui fonctionne bien
-            logger.info("🔄 Utilisation recherche classique (temporaire - références correctes)")
-            
             # Détecter le domaine de la question
             query_domain = self.detect_query_domain(query)
             
@@ -1544,477 +1104,475 @@ class LexFinClient:
                 logger.info(f"🎯 Article spécifique trouvé: {query}")
                 return article_result
             
-            # Générer embedding de la requête pour recherche vectorielle
+            # Générer embedding de la requête
             query_embedding = self.generate_embeddings(query)
             if not query_embedding:
                 logger.warning("  Impossible de générer embedding pour la requête")
                 return {"context": "", "references": []}
             
-            # 🔥 RECHERCHE HYBRIDE: Vectoriel + BM25
-            logger.info(f"🔍 Recherche HYBRIDE (Vectoriel + BM25): {query[:50]}...")
+            # Rechercher dans ChromaDB avec filtre par domaine si spécifique
+            logger.info(f"🔍 Recherche avec références: {query[:50]}...")
             
             # Préparer les filtres selon le domaine
             where_filter = {}
             if query_domain == "impots":
+                # Filtrer pour ne chercher que dans le Code des Impôts
                 where_filter = {"file_name": {"$eq": "Senegal-Code-des-impot.pdf"}}
                 logger.info("📊 Recherche limitée au Code des Impôts")
             elif query_domain == "douanes":
+                # Filtrer pour ne chercher que dans le Code des Douanes
                 where_filter = {"file_name": {"$eq": "Senegal-Code-2014-des-douanes.pdf"}}
-                logger.info("🚢 Recherche limitée au Code des Douanes")
+                logger.info("� Recherche limitée au Code des Douanes")
+            # Si general, pas de filtre - cherche dans les deux codes
             
-            # ÉTAPE 1: Recherche VECTORIELLE (embeddings)
-            # Augmenter significativement le nombre de résultats pour mieux capturer les documents pertinents
-            n_vectorial_results = min(100, limit * 20)  # Au moins 100 résultats ou 20x la limite
-            
+            # Effectuer la recherche avec ou sans filtre
             if where_filter:
-                vectorial_results = self.collection.query(
+                results = self.collection.query(
                     query_embeddings=[query_embedding],
-                    n_results=n_vectorial_results,
-                    where=where_filter,
-                    include=['documents', 'metadatas', 'distances']
-                )
-            else:
-                vectorial_results = self.collection.query(
-                    query_embeddings=[query_embedding],
-                    n_results=n_vectorial_results,
-                    include=['documents', 'metadatas', 'distances']
-                )
-            
-            # ÉTAPE 2: Récupérer TOUS les documents pour BM25
-            # (Optimisation: on pourrait limiter au même domaine)
-            if where_filter:
-                all_docs_data = self.collection.get(
+                    n_results=limit * 2,
                     where=where_filter,
                     include=['documents', 'metadatas']
                 )
             else:
-                all_docs_data = self.collection.get(
+                results = self.collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=limit * 2,  # Récupérer plus pour pouvoir dédupliquer
                     include=['documents', 'metadatas']
                 )
             
-            all_documents = all_docs_data['documents']
-            all_metadatas = all_docs_data['metadatas']
-            
-            logger.info(f"📚 Corpus BM25: {len(all_documents)} documents")
-            
-            # Calculer BM25 scores
-            bm25 = BM25()
-            
-            # Calculer IDF sur tout le corpus
-            idf = bm25.compute_idf(all_documents)
-            
-            # Calculer longueur moyenne des documents
-            avg_doc_len = sum(len(bm25.tokenize(doc)) for doc in all_documents) / len(all_documents)
-            
-            # Calculer le score BM25 pour chaque document
-            bm25_scores = []
-            for doc in all_documents:
-                score = bm25.score(query, doc, avg_doc_len, idf)
-                bm25_scores.append(score)
-            
-            logger.info(f"✅ BM25 scores calculés pour {len(bm25_scores)} documents")
-            
-            # ÉTAPE 3: COMBINER les scores vectoriels et BM25
-            # Normaliser les scores pour pouvoir les combiner
-            
-            # Scores vectoriels (distances ChromaDB - plus petit = meilleur)
-            vectorial_docs = vectorial_results['documents'][0] if vectorial_results['documents'] else []
-            vectorial_metas = vectorial_results['metadatas'][0] if vectorial_results['metadatas'] else []
-            vectorial_distances = vectorial_results['distances'][0] if vectorial_results.get('distances') else []
-            
-            # Normaliser les distances vectorielles (0-1, où 1 = meilleur)
-            if vectorial_distances:
-                max_dist = max(vectorial_distances) if vectorial_distances else 1
-                min_dist = min(vectorial_distances) if vectorial_distances else 0
-                range_dist = max_dist - min_dist if max_dist != min_dist else 1
+            if results and results['documents'] and results['documents'][0]:
+                documents = results['documents'][0]
+                metadatas = results['metadatas'][0] if results['metadatas'] else []
                 
-                vectorial_scores_normalized = [
-                    1 - ((dist - min_dist) / range_dist) for dist in vectorial_distances
-                ]
-            else:
-                vectorial_scores_normalized = [1.0] * len(vectorial_docs)
-            
-            # Normaliser les scores BM25 (0-1, où 1 = meilleur)
-            if bm25_scores:
-                max_bm25 = max(bm25_scores)
-                min_bm25 = min(bm25_scores)
-                range_bm25 = max_bm25 - min_bm25 if max_bm25 != min_bm25 else 1
+                context_parts = []
+                references = []
                 
-                bm25_scores_normalized = [
-                    (score - min_bm25) / range_bm25 for score in bm25_scores
-                ]
-            else:
-                bm25_scores_normalized = [0.0] * len(all_documents)
-            
-            # ÉTAPE 4: Combiner les résultats
-            # Créer un dictionnaire doc_text -> (metadata, vectorial_score, bm25_score)
-            combined_results = {}
-            
-            # Ajouter les résultats vectoriels
-            for i, doc in enumerate(vectorial_docs):
-                combined_results[doc] = {
-                    'metadata': vectorial_metas[i] if i < len(vectorial_metas) else {},
-                    'vectorial_score': vectorial_scores_normalized[i] if i < len(vectorial_scores_normalized) else 0,
-                    'bm25_score': 0,  # Sera mis à jour ensuite
-                    'content': doc
+                for i, doc in enumerate(documents):
+                    metadata = metadatas[i] if metadatas and i < len(metadatas) else {}
+                    
+                    if metadata:
+                        file_name = metadata.get('file_name', 'Document inconnu')
+                        file_path = metadata.get('file_path', '')
+                        line_start = metadata.get('line_start', 1)
+                        line_end = metadata.get('line_end', 1)
+                        page_start = metadata.get('page_start', 1)
+                        page_end = metadata.get('page_end', 1)
+                        
+                        # Créer la référence précise
+                        if line_start == line_end:
+                            location = f"ligne {line_start}"
+                        else:
+                            location = f"lignes {line_start}-{line_end}"
+                        
+                        if page_start == page_end:
+                            page_info = f"page {page_start}"
+                        else:
+                            page_info = f"pages {page_start}-{page_end}"
+                        
+                        # Extraire les informations d'article si disponibles
+                        article_ref = metadata.get('article_ref', 'Section générale')
+                        article_number = metadata.get('article_number', '')
+                        section = metadata.get('section', '')
+                        titre = metadata.get('titre', '')
+                        
+                        reference = {
+                            'file_name': file_name,
+                            'file_path': file_path,
+                            'location': location,
+                            'page_info': page_info,
+                            'line_start': line_start,
+                            'line_end': line_end,
+                            'page_start': page_start,
+                            'page_end': page_end,
+                            'article_ref': article_ref,
+                            'article_number': article_number,
+                            'section': section,
+                            'titre': titre,
+                            'snippet': doc[:150] + "..." if len(doc) > 150 else doc,
+                            'content': doc  # Ajouter le contenu complet pour le filtrage
+                        }
+                        references.append(reference)
+                        
+                        # Créer une source info enrichie avec l'article
+                        if article_ref and article_ref != 'Section générale':
+                            source_info = f"[📄 {file_name} - {article_ref}, {page_info}, {location}]"
+                        else:
+                            source_info = f"[📄 {file_name}, {page_info}, {location}]"
+                        context_parts.append(f"{source_info}\n{doc}")
+                    else:
+                        context_parts.append(doc)
+                
+                # Dédupliquer les références intelligemment
+                deduplicated_references = self.deduplicate_references(references)
+                
+                # Limiter au nombre demandé après déduplication
+                final_references = deduplicated_references[:limit]
+                final_context_parts = context_parts[:len(final_references)]
+                
+                logger.info(f"✅ Contexte avec références déduplicates: {len(final_references)} documents uniques")
+                return {
+                    "context": "\n\n".join(final_context_parts),
+                    "references": final_references
                 }
-            
-            # Ajouter/mettre à jour les scores BM25
-            for i, doc in enumerate(all_documents):
-                if doc in combined_results:
-                    combined_results[doc]['bm25_score'] = bm25_scores_normalized[i]
-                else:
-                    # Document trouvé par BM25 mais pas par vectoriel
-                    combined_results[doc] = {
-                        'metadata': all_metadatas[i] if i < len(all_metadatas) else {},
-                        'vectorial_score': 0,
-                        'bm25_score': bm25_scores_normalized[i],
-                        'content': doc
-                    }
-            
-            # Calculer le score hybride combiné avec détection de mots rares
-            # Détecter si la requête contient des mots rares (indicateur: mot peu fréquent)
-            query_tokens = bm25.tokenize(query)
-            rare_word_detected = False
-            
-            # Un mot est considéré comme rare si son IDF est élevé (> seuil)
-            if query_tokens:
-                avg_idf = sum(idf.get(token, 0) for token in query_tokens) / len(query_tokens)
-                # Si l'IDF moyen est élevé (> 5), on a probablement des mots rares/spécifiques
-                if avg_idf > 5.0:
-                    rare_word_detected = True
-                    logger.info(f"🔍 Mots rares détectés (IDF moyen: {avg_idf:.2f}) - Privilégier BM25")
-            
-            # Ajuster les poids selon la présence de mots rares
-            if rare_word_detected:
-                # Pour mots rares: privilégier BM25 (matching exact)
-                alpha = 0.3  # Poids vectoriel réduit
-                beta = 0.7   # Poids BM25 augmenté
-                logger.info("⚖️ Poids: 30% Vectoriel + 70% BM25 (mots rares)")
             else:
-                # Pour requêtes normales: équilibre 50/50
-                alpha = 0.5  # Poids vectoriel
-                beta = 0.5   # Poids BM25
-                logger.info("⚖️ Poids: 50% Vectoriel + 50% BM25 (équilibre)")
-            
-            for doc_text in combined_results:
-                v_score = combined_results[doc_text]['vectorial_score']
-                b_score = combined_results[doc_text]['bm25_score']
-                combined_results[doc_text]['hybrid_score'] = alpha * v_score + beta * b_score
-            
-            # Trier par score hybride décroissant
-            sorted_results = sorted(
-                combined_results.items(),
-                key=lambda x: x[1]['hybrid_score'],
-                reverse=True
-            )
-            
-            # Prendre beaucoup plus de résultats pour maximiser les chances de trouver les bons documents
-            # Augmenté à 50 pour une meilleure couverture (au lieu de limit * 2)
-            top_results = sorted_results[:min(50, len(sorted_results))]
-            
-            logger.info(f"🎯 Top 10 scores hybrides:")
-            for i, (doc, data) in enumerate(top_results[:10]):
-                article_ref = data['metadata'].get('article_ref', 'N/A')[:50]
-                logger.info(f"  #{i+1}: {article_ref} - Hybride: {data['hybrid_score']:.3f} (V:{data['vectorial_score']:.3f} + BM25:{data['bm25_score']:.3f})")
-            
-            # ÉTAPE 5: Construire les références
-            context_parts = []
-            references = []
-            
-            for doc_text, data in top_results:
-                metadata = data['metadata']
-                
-                if metadata:
-                    file_name = metadata.get('file_name', 'Document inconnu')
-                    file_path = metadata.get('file_path', '')
-                    line_start = metadata.get('line_start', 1)
-                    line_end = metadata.get('line_end', 1)
-                    page_start = metadata.get('page_start', 1)
-                    page_end = metadata.get('page_end', 1)
-                    
-                    # Créer la référence précise
-                    if line_start == line_end:
-                        location = f"ligne {line_start}"
-                    else:
-                        location = f"lignes {line_start}-{line_end}"
-                    
-                    if page_start == page_end:
-                        page_info = f"page {page_start}"
-                    else:
-                        page_info = f"pages {page_start}-{page_end}"
-                    
-                    # Extraire les informations d'article
-                    article_ref = metadata.get('article_ref', 'Section générale')
-                    article_number = metadata.get('article_number', '')
-                    section = metadata.get('section', '')
-                    titre = metadata.get('titre', '')
-                    
-                    reference = {
-                        'file_name': file_name,
-                        'file_path': file_path,
-                        'location': location,
-                        'page_info': page_info,
-                        'line_start': line_start,
-                        'line_end': line_end,
-                        'page_start': page_start,
-                        'page_end': page_end,
-                        'article_ref': article_ref,
-                        'article_number': article_number,
-                        'section': section,
-                        'titre': titre,
-                        'snippet': doc_text[:150] + "..." if len(doc_text) > 150 else doc_text,
-                        'content': doc_text,
-                        '_score': data['hybrid_score']  # Score hybride pour tri
-                    }
-                    references.append(reference)
-                    
-                    # Créer une source info enrichie
-                    if article_ref and article_ref != 'Section générale':
-                        source_info = f"[📄 {file_name} - {article_ref}, {page_info}, {location}]"
-                    else:
-                        source_info = f"[📄 {file_name}, {page_info}, {location}]"
-                    context_parts.append(f"{source_info}\n{doc_text}")
-                else:
-                    context_parts.append(doc_text)
-            
-            # Dédupliquer les références intelligemment
-            deduplicated_references = self.deduplicate_references(references)
-            
-            # Augmenter la limite finale pour retourner plus de documents pertinents
-            # Utiliser min(30, limit * 3) pour avoir une bonne couverture
-            final_limit = min(30, max(limit * 3, 20))
-            final_references = deduplicated_references[:final_limit]
-            final_context_parts = context_parts[:len(final_references)]
-            
-            logger.info(f"✅ Recherche HYBRIDE terminée: {len(final_references)} documents uniques (sur {len(deduplicated_references)} après déduplication)")
-            return {
-                "context": "\n\n".join(final_context_parts),
-                "references": final_references
-            }
-            
+                logger.warning("  Aucun contexte trouvé dans ChromaDB")
+                return {"context": "", "references": []}
         except Exception as e:
-            logger.error(f"❌ Erreur recherche HYBRIDE: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"  Erreur recherche ChromaDB: {e}")
             return {"context": "", "references": []}
 
     def search_specific_article(self, query: str) -> Dict:
-        """Recherche intelligente d'articles basée sur la compréhension naturelle du contexte"""
+        """Recherche spécifique d'articles par numéro avec recherche étendue et filtrage par domaine"""
         import re
-        logger.info(f"🧠 Recherche intelligente: {query}")
         
-        if not self.collection:
+        # Détecter le domaine de la question
+        query_domain = self.detect_query_domain(query)
+        
+        # Corriger les fautes de frappe courantes
+        query_corrected = query.lower()
+        query_corrected = re.sub(r'atrticle', 'article', query_corrected)  # Correction "atrticle" → "article"
+        query_corrected = re.sub(r'artcile', 'article', query_corrected)   # Correction "artcile" → "article"
+        
+        # Détecter si la requête demande un article spécifique ou une sous-définition
+        article_patterns = [
+            r'article\s*(\d+)(?:\s+(?:point|section|alinéa|définition)\s*(\d+(?:-\d+)?))?',  # Article X point Y ou Article X section Y-Z
+            r'article\s*(\d+(?:-\d+)?)',  # Article X-Y direct
+            r'art\.\s*(\d+(?:-\d+)?)', 
+            r'art\s*(\d+(?:-\d+)?)',
+            r'l\'article\s*(\d+(?:-\d+)?)',
+            r'article\s*premier',
+            r'premier\s*article',
+            r'point\s*(\d+(?:-\d+)?)\s*(?:de\s*l\')?article\s*(\d+)',  # Point X-Y de l'article Z
+            r'définition\s*(\d+(?:-\d+)?)\s*(?:de\s*l\')?article\s*(\d+)',  # Définition X de l'article Y
+        ]
+        
+        article_number = None
+        sub_definition = None
+        
+        for pattern in article_patterns:
+            match = re.search(pattern, query_corrected)  # Utiliser la query corrigée
+            if match:
+                if 'premier' in pattern:
+                    article_number = "1"
+                elif 'point' in pattern or 'définition' in pattern:
+                    # Pattern inversé: "point X de l'article Y" ou "définition X de l'article Y"
+                    if match.lastindex >= 2:
+                        sub_definition = match.group(1)
+                        article_number = match.group(2)
+                    else:
+                        article_number = match.group(1)
+                else:
+                    # Pattern normal: "article X point Y"
+                    article_number = match.group(1)
+                    if match.lastindex >= 2 and match.group(2):
+                        sub_definition = match.group(2)
+                break
+        
+        if not article_number:
             return {"context": "", "references": []}
         
         try:
-            # Extraction simple des numéros d'articles
-            article_numbers = re.findall(r'article\s+(\d+)', query.lower())
-            if not article_numbers:
-                article_numbers = re.findall(r'(\d+)', query)[:1]  # Premier nombre trouvé
+            if sub_definition:
+                logger.info(f"🎯 Recherche article spécifique: Article {article_number}, définition {sub_definition}")
+            else:
+                logger.info(f"🎯 Recherche article spécifique: Article {article_number}")
             
-            if not article_numbers:
-                return {"context": "", "references": []}
+            # Recherche étendue par contenu avec patterns multiples
+            search_patterns = [
+                f"article {article_number}",
+                f"art. {article_number}",
+                f"art {article_number}",
+                f"article{article_number}",
+                f"Art. {article_number}",
+                f"Article {article_number}",
+                f"ARTICLE {article_number}"
+            ]
             
-            unique_articles = list(dict.fromkeys(article_numbers))
-            logger.info(f"🎯 Articles détectés: {unique_articles}")
+            # Si on cherche une sous-définition spécifique (comme "point 2-1" dans Article 1)
+            if sub_definition:
+                search_patterns.extend([
+                    f"{sub_definition}.",  # "2-1." ou "3."
+                    f"{sub_definition} ",  # "2-1 " ou "3 "
+                    f"{sub_definition}-",  # Pour les patterns comme "2-1-"
+                    f"définition {sub_definition}",
+                    f"point {sub_definition}",
+                    f"alinéa {sub_definition}"
+                ])
             
-            # Recherche contextuelle simple et intelligente
+            # Patterns spécifiques selon les articles
+            if article_number == "1":
+                search_patterns.extend([
+                    "aux fins du présent code",
+                    "on entend par",
+                    "définitions",
+                    # Définitions Code des Douanes
+                    "adhérent à la fraude",
+                    "aéroport douanier",
+                    "port douanier",
+                    "bureau de douane",
+                    # Définitions Code des Impôts
+                    "espèce d'une marchandise",
+                    "dénomination qui lui est attribuée",
+                    "tarif des douanes",
+                    "contribuable",
+                    "impôt sur le revenu",
+                    "taxe sur la valeur ajoutée"
+                ])
+            elif article_number == "4":
+                search_patterns.extend([
+                    "personnes imposables",
+                    "sociétés par actions",
+                    "sociétés à responsabilité limitée",
+                    "sarl",
+                    "société anonyme",
+                    "impôt sur les sociétés",
+                    "soumises à l'impôt",
+                    "champ d'application",
+                    "sous-section",
+                    "personnes morales"
+                ])
+            
+            # Ajouter les patterns pour les sous-sections si le numéro d'article contient un tiret
+            if "-" in article_number:
+                base_number = article_number.split("-")[0]
+                search_patterns.extend([
+                    f"article {base_number}-",
+                    f"Art. {base_number}-",
+                    f"Article {base_number}-",
+                    f"ARTICLE {base_number}-"
+                ])
+            
+            if article_number == "1":
+                search_patterns.extend([
+                    "article premier",
+                    "Article premier", 
+                    "ARTICLE PREMIER",
+                    "Art. 1er",
+                    "article 1er",
+                    "Article 1er",
+                    "ARTICLE 1ER",
+                    "Article 1°",
+                    "Art. 1°"
+                ])
+                # Patterns de début d'article strict pour Article 1
+                strict_patterns = [
+                    "article premier :",
+                    "Article premier :",
+                    "ARTICLE PREMIER :",
+                    "article 1er :",
+                    "Article 1er :",
+                    "ART. 1ER :",
+                    "Article 1 :",
+                    "ARTICLE 1 :"
+                ]
+                search_patterns.extend(strict_patterns)
+            
             all_results = []
             
-            for article_num in unique_articles:
-                # Stratégies de recherche simples mais efficaces
-                search_terms = [
-                    query,  # Requête complète de l'utilisateur
-                    f"Article {article_num}",
-                    f"Article {article_num} " + " ".join([w for w in query.split() if w.lower() not in ['article', article_num, 'du', 'de', 'la', 'le']])
-                ]
-                
-                for search_term in search_terms:
-                    try:
-                        # Recherche vectorielle simple
-                        query_embedding = self.generate_embeddings(search_term)
-                        if query_embedding:
+            # Essayer chaque pattern de recherche
+            for pattern in search_patterns:
+                try:
+                    # Recherche par embedding avec filtre par domaine
+                    query_embedding = self.generate_embeddings(pattern)
+                    if query_embedding:
+                        # Préparer le filtre selon le domaine
+                        where_filter = {}
+                        if query_domain == "impots":
+                            where_filter = {"file_name": {"$eq": "Senegal-Code-des-impot.pdf"}}
+                        elif query_domain == "douanes":
+                            where_filter = {"file_name": {"$eq": "Senegal-Code-2014-des-douanes.pdf"}}
+                        
+                        # Effectuer la recherche avec ou sans filtre
+                        if where_filter:
                             results = self.collection.query(
                                 query_embeddings=[query_embedding],
-                                n_results=15,  # Plus de résultats pour trouver le bon article
-                                include=['documents', 'metadatas', 'distances']
+                                n_results=10,
+                                where=where_filter,
+                                include=['documents', 'metadatas']
                             )
+                        else:
+                            results = self.collection.query(
+                                query_embeddings=[query_embedding],
+                                n_results=10,
+                                include=['documents', 'metadatas']
+                            )
+                        
+                        if results and results['documents'] and results['documents'][0]:
+                            documents = results['documents'][0]
+                            metadatas = results['metadatas'][0] if results['metadatas'] else []
                             
-                            if results['documents'][0]:
-                                for i, doc in enumerate(results['documents'][0]):
-                                    metadata = results['metadatas'][0][i] if i < len(results['metadatas'][0]) else {}
+                            # Filtrer pour ne garder que ceux qui contiennent vraiment l'article
+                            for i, doc in enumerate(documents):
+                                doc_lower = doc.lower()
+                                
+                                # Éviter les lignes de sommaire avec points de suite
+                                if "......" in doc or "………" in doc or "......." in doc:
+                                    continue
                                     
-                                    # Score intelligent basé sur la correspondance naturelle
-                                    score = self._calculate_natural_score(doc, metadata, article_num, query.lower())
+                                # Éviter les documents trop courts (probablement des références)
+                                if len(doc.strip()) < 100:
+                                    continue
+                                
+                                # Vérifier les patterns principaux
+                                pattern_matches = [p for p in search_patterns if p.lower() in doc_lower]
+                                if pattern_matches:
+                                    # Débogage : log du document trouvé
+                                    logger.debug(f"📍 Pattern trouvé: {pattern_matches[0]} dans: {doc[:150]}...")
                                     
-                                    # Seuil adaptatif selon le numéro d'article
-                                    min_score = 5
-                                    if len(article_num) == 1:  # Articles à 1 chiffre plus rares
-                                        min_score = -50  # Seuil plus bas pour Article 1, 2, etc.
+                                    # Pour l'article 1, prioriser les patterns de début strict
+                                    if article_number == "1":
+                                        strict_match = any(p.lower() + " " in doc_lower for p in ["article premier", "article 1er", "article 1"])
+                                        if not strict_match:
+                                            # Si c'est juste une référence à l'article 1, ignorer
+                                            if "l'article 1" in doc_lower or "à l'article 1" in doc_lower or "article 1er alinéa" in doc_lower:
+                                                logger.debug(f"⏭️ Référence ignorée: {doc[:100]}...")
+                                                continue
                                     
-                                    if score > min_score:  # Seuil de pertinence adaptatif
-                                        result_item = {
-                                            'document': doc,
-                                            'metadata': metadata,
-                                            'distance': results['distances'][0][i] if results.get('distances') and i < len(results['distances'][0]) else 1.0,
-                                            'priority_score': score,
-                                            'search_term': search_term
-                                        }
-                                        all_results.append(result_item)
-                                        logger.info(f"✅ Article {article_num} trouvé (score naturel: {score})")
-                                        
-                    except Exception as e:
-                        continue  # Passer au terme suivant silencieusement
+                                    # Vérifier qu'il y a du contenu substantiel après la mention de l'article
+                                    article_found = False
+                                    for pattern in pattern_matches:
+                                        if pattern.lower() in doc_lower:
+                                            article_pos = doc_lower.find(pattern.lower())
+                                            content_after = doc[article_pos + len(pattern):].strip()
+                                            if len(content_after) > 50:  # Il doit y avoir du contenu substantiel
+                                                article_found = True
+                                                break
+                                    
+                                    if article_found:
+                                        metadata = metadatas[i] if metadatas and i < len(metadatas) else {}
+                                        all_results.append((doc, metadata))
+                                        logger.debug(f"✅ Article accepté: {doc[:100]}...")
+                except Exception as e:
+                    logger.debug(f"Erreur pattern {pattern}: {e}")
+                    continue
             
-            if not all_results:
-                return {"context": "", "references": []}
+            # Supprimer les doublons et prioriser les vrais articles
+            unique_results = []
+            seen_docs = set()
+            priority_articles = []  # Articles qui commencent vraiment par "Article X :"
+            reference_articles = []  # Articles qui font juste référence
             
-            # Trier par score et prendre les meilleurs
-            all_results.sort(key=lambda x: x['priority_score'], reverse=True)
-            best_results = all_results[:5]  # Plus de résultats pour analyse
-            
-            # Construire la réponse
-            context_parts = []
-            references = []
-            
-            for result in best_results:
-                doc = result['document']
-                metadata = result['metadata']
-                
-                # 🔧 CORRECTION: Ajouter les propriétés manquantes pour JavaScript
-                page_start = metadata.get('page_start', 1)
-                page_end = metadata.get('page_end', page_start)
-                line_start = metadata.get('line_start', 1)
-                line_end = metadata.get('line_end', line_start)
-                file_path = metadata.get('file_path', '')
-                
-                # Créer page_info et location comme dans search_context_with_references
-                if page_start == page_end:
-                    page_info = f"page {page_start}"
-                else:
-                    page_info = f"pages {page_start}-{page_end}"
-                
-                if line_start == line_end:
-                    location = f"ligne {line_start}"
-                else:
-                    location = f"lignes {line_start}-{line_end}"
-                
-                reference = {
-                    'file_name': metadata.get('file_name', 'Document'),
-                    'file_path': file_path,
-                    'article_ref': metadata.get('article_ref', f'Article {article_numbers[0]}'),
-                    'page': page_start,  # Garder l'ancienne propriété pour compatibilité
-                    'page_info': page_info,  # ✅ Nouvelle propriété attendue par JavaScript
-                    'location': location,    # ✅ Nouvelle propriété attendue par JavaScript
-                    'line_start': line_start, # ✅ Propriété attendue par JavaScript
-                    'line_end': line_end,     # ✅ Propriété attendue par JavaScript
-                    'page_start': page_start,
-                    'page_end': page_end,
-                    'content': doc,
-                    '_score': result['priority_score'],
-                    'snippet': doc[:300] + "..." if len(doc) > 300 else doc
-                }
-                references.append(reference)
-                
-                source_info = f"[📄 {reference['file_name']} - {reference['article_ref']}, page {reference['page']}]"
-                context_parts.append(f"{source_info}\n{doc}")
-            
-            logger.info(f"✅ {len(references)} résultat(s) intelligent(s)")
-            return {
-                "context": "\n\n".join(context_parts),
-                "references": references
-            }
-                
-        except Exception as e:
-            logger.error(f"❌ Erreur recherche: {e}")
-            return {"context": "", "references": []}
-
-
-    def _calculate_natural_score(self, doc: str, metadata: Dict, article_num: str, query_lower: str) -> int:
-        """Score naturel basé sur la compréhension du contexte sans règles"""
-        score = 0
-        doc_lower = doc.lower()
-        article_ref = metadata.get('article_ref', '').lower()
-        
-        # PRIORITÉ ABSOLUE: Article exact trouvé
-        if f"article {article_num}" in doc_lower:
-            score += 50  # Score très élevé pour article exact
-        
-        # Vérification ULTRA STRICTE du numéro d'article dans article_ref
-        import re
-        
-        # Extraction du numéro d'article exact avec patterns stricts
-        article_patterns = [
-            r'article\s+(\d+)(?:\s|\.|\:|$)',  # Article suivi d'espace, point, deux-points ou fin
-            r'article\s+(\d+)(?:\s+[a-zA-Z])',  # Article suivi d'espace puis lettre
-        ]
-        
-        found_article_num = None
-        for pattern in article_patterns:
-            article_match = re.search(pattern, article_ref)
-            if article_match:
-                found_article_num = article_match.group(1)
-                break
-        
-        if found_article_num:
-            if found_article_num == article_num:
-                score += 200  # BONUS ÉNORME pour article exact
-                
-                # BONUS SUPPLÉMENTAIRE pour correspondance exacte stricte
-                # Vérifier que ce n'est pas une sous-partie d'un autre numéro
-                if f"article {article_num} " in article_ref or f"article {article_num}." in article_ref:
-                    score += 50  # Bonus pour séparateur strict
+            for doc, metadata in all_results:
+                doc_hash = hash(doc[:100])  # Hash des 100 premiers caractères
+                if doc_hash not in seen_docs:
+                    seen_docs.add(doc_hash)
                     
-            elif article_num in found_article_num:
-                # Cas où on cherche Article 1 mais on trouve Article 157
-                if len(article_num) < len(found_article_num):
-                    score -= 100  # GROSSE PÉNALITÉ pour faux positif (1 dans 157)
-                else:
-                    score -= 30   # Pénalité moindre pour autres cas
+                    # Prioriser les articles qui commencent réellement par "Article X :"
+                    doc_start = doc.strip().lower()
+                    
+                    if article_number == "1":
+                        # Pour Article 1, chercher les vrais débuts d'article
+                        is_real_article = (
+                            doc_start.startswith("article 1 :") or 
+                            doc_start.startswith("article premier :") or
+                            doc_start.startswith("article 1er :") or
+                            # Vérifier aussi les patterns avec espaces
+                            doc_start.startswith("article  1") or
+                            # Pattern pour définitions (ce qu'on a vu dans les logs)
+                            ("aux fins du présent code" in doc_start and "article 1" in doc_start)
+                        )
+                        
+                        # Si on cherche une sous-définition spécifique, vérifier qu'elle est présente
+                        if sub_definition and is_real_article:
+                            # Vérifier que la sous-définition demandée est dans ce document
+                            has_sub_def = (
+                                f"{sub_definition}." in doc or 
+                                f"{sub_definition} " in doc or
+                                f"{sub_definition}-" in doc
+                            )
+                            if has_sub_def:
+                                priority_articles.append((doc, metadata))
+                                logger.info(f"✅ Sous-définition {sub_definition} trouvée dans Article 1")
+                            else:
+                                logger.debug(f"⏭️ Sous-définition {sub_definition} non trouvée dans ce chunk")
+                        elif is_real_article:
+                            priority_articles.append((doc, metadata))
+                        else:
+                            # Ignorer les simples références
+                            if not ("à l'article 1" in doc_start or "l'article 1er alinéa" in doc_start):
+                                reference_articles.append((doc, metadata))
+                    else:
+                        # Pour les autres articles
+                        if doc_start.startswith(f"article {article_number} :") or doc_start.startswith(f"article  {article_number}"):
+                            priority_articles.append((doc, metadata))
+                        else:
+                            reference_articles.append((doc, metadata))
+            
+            # Combiner avec priorité aux vrais articles
+            unique_results = priority_articles + reference_articles
+            unique_results = unique_results[:5]  # Limiter à 5 résultats maximum
+            
+            # Si on a des articles prioritaires, limiter aux 2 premiers + 1 référence maximum
+            if priority_articles:
+                unique_results = priority_articles[:2] + reference_articles[:1]
             else:
-                score -= 50   # PÉNALITÉ pour mauvais article
+                unique_results = reference_articles[:3]
+            
+            if unique_results:
+                context_parts = []
+                references = []
+                
+                for doc, metadata in unique_results:
+                    file_name = metadata.get('file_name', 'Document')
+                    article_ref = metadata.get('article_ref', f'Article {article_number}')
+                    
+                    # Créer un snippet plus long pour l'article
+                    snippet = doc[:500] + "..." if len(doc) > 500 else doc
+                    
+                    source_info = f"[📄 {file_name} - {article_ref}]"
+                    context_parts.append(f"{source_info}\n{doc}")
+                    
+                    reference = {
+                        'file_name': file_name,
+                        'file_path': metadata.get('file_path', ''),
+                        'article_ref': article_ref,
+                        'article_number': metadata.get('article_number', f'Article {article_number}'),
+                        'snippet': snippet,
+                        'line_start': metadata.get('line_start', 1),
+                        'line_end': metadata.get('line_end', 1),
+                        'page_start': metadata.get('page_start', 1),
+                        'page_end': metadata.get('page_end', 1)
+                    }
+                    references.append(reference)
+                
+                if sub_definition:
+                    logger.info(f"✅ Article {article_number}, définition {sub_definition} trouvée: {len(unique_results)} sections")
+                else:
+                    logger.info(f"✅ Article {article_number} trouvé: {len(unique_results)} sections uniques")
+                
+                # Contexte spécialisé avec identification du code source
+                final_context = "\n\n".join(context_parts)
+                if priority_articles:
+                    # Identifier le code source depuis les métadonnées
+                    first_ref = references[0] if references else {}
+                    file_name = first_ref.get('file_name', '').lower()
+                    
+                    if 'impot' in file_name:
+                        code_source = "CODE GÉNÉRAL DES IMPÔTS (CGI) SÉNÉGAL"
+                    elif 'douane' in file_name:
+                        code_source = "CODE DES DOUANES SÉNÉGAL"
+                    else:
+                        code_source = "CODE JURIDIQUE SÉNÉGAL"
+                    
+                    if article_number == "1" and priority_articles:
+                        # Mettre l'accent sur le vrai Article 1
+                        priority_context = priority_articles[0][0]  # Premier article prioritaire
+                        if sub_definition:
+                            final_context = f"ARTICLE 1 DU {code_source} - DÉFINITION {sub_definition}:\n\n{priority_context}\n\n" + final_context
+                        else:
+                            final_context = f"ARTICLE 1 AUTHENTIQUE DU {code_source}:\n\n{priority_context}\n\n" + final_context
+                    else:
+                        final_context = f"ARTICLE {article_number} DU {code_source}:\n\n" + final_context
+                
+                return {
+                    "context": final_context,
+                    "references": references
+                }
+            
+        except Exception as e:
+            logger.error(f"Erreur recherche article spécifique: {e}")
         
-        # Correspondance des mots de la requête utilisateur
-        query_words = set(word for word in query_lower.split() if len(word) > 2)
-        doc_words = set(word for word in doc_lower.split() if len(word) > 2)
-        
-        # Score basé sur la correspondance des mots
-        common_words = query_words.intersection(doc_words)
-        score += len(common_words) * 4
-        
-        # Bonus pour les concepts importants détectés naturellement
-        important_concepts = {
-            'benefices': ['benefices', 'bénéfices', 'imposables'],
-            'determination': ['determination', 'détermination', 'benefice', 'bénéfice'],
-            'periode': ['periode', 'période', 'imposition', 'exercice'],
-            'personnes': ['personnes', 'imposables', 'champ', 'application'],
-            'societes': ['société', 'sociétés', 'sarl', 'sa'],
-            'fiscal': ['fiscal', 'fiscale', 'impot', 'impôt'],
-            'douanes': ['douanes', 'douanier', 'marchandises'],
-            'application': ['application', 'champ', 'dispositions']
-        }
-        
-        for concept, terms in important_concepts.items():
-            if any(term in query_lower for term in terms):
-                concept_matches = sum(1 for term in terms if term in doc_lower)
-                if concept_matches > 0:
-                    score += concept_matches * 6
-        
-        # Bonus pour la présence de structure
-        if any(struct in doc_lower for struct in ['section', 'sous-section', 'chapitre']):
-            score += 3
-        
-        # BONUS SPÉCIAL pour "période d'imposition" si recherché
-        if 'periode' in query_lower or 'période' in query_lower:
-            if 'période d\'imposition' in doc_lower or 'periode d\'imposition' in doc_lower:
-                score += 30  # Bonus important pour concept clé
-        
-        # BONUS pour correspondance de longueur de numéro d'article
-        if found_article_num and len(found_article_num) == len(article_num):
-            score += 20  # Bonus pour même longueur de numéro
-        
-        return score
+        return {"context": "", "references": []}
 
     def search_context(self, query: str, limit: int = 5) -> str:
         """Recherche le contexte dans les documents indexés (version simple)"""
@@ -2043,7 +1601,7 @@ class LexFinClient:
     def generate_greeting_response(self, message: str) -> str:
         """Génère une réponse simplifiée aux salutations - Mode RAG strict"""
         # En mode RAG strict, réponse unique et courte qui rappelle la spécialisation fiscale
-        return """Bonjour ! Je suis LexFin, votre assistant IA spécialisé UNIQUEMENT en fiscalité sénégalaise.
+        return """Bonjour ! Je suis SRMT-DOCUMIND, votre assistant IA spécialisé UNIQUEMENT en fiscalité sénégalaise.
 
 ⚠️ MODE RAG STRICT : Je réponds exclusivement sur la base des documents fiscaux indexés.
 
@@ -2241,14 +1799,14 @@ class LexFinClient:
         """Génère une réponse naturelle aux salutations en utilisant Mistral directement"""
         try:
             # Prompt pour que Mistral réponde naturellement aux salutations
-            greeting_prompt = f"""Tu es LexFin, un assistant IA intelligent spécialisé pour les contribuables sénégalais en fiscalité et douanes.
+            greeting_prompt = f"""Tu es SRMT-DOCUMIND, un assistant IA intelligent spécialisé pour les contribuables sénégalais en fiscalité et douanes.
 
 L'utilisateur te dit: "{message}"
 
 IMPORTANT: Tu es un expert en Code des Impôts et Code des Douanes du Sénégal. Tu aides les contribuables sénégalais avec leurs questions fiscales et douanières.
 
 Réponds de façon naturelle et professionnelle:
-- Présente-toi comme LexFin, l'assistant expert fiscal et douanier sénégalais
+- Présente-toi comme SRMT-DOCUMIND, l'assistant expert fiscal et douanier sénégalais
 - Précise tes spécialités : Code des Impôts, Code des Douanes, DGI, procédures fiscales
 - Mentionne que tu peux analyser documents administratifs (PDF, Word, Excel)
 - Reste professionnel et utilisé des émojis appropriés (🇸🇳, 🏛️, 📋)
@@ -2334,74 +1892,6 @@ Réponse:"""
             "references": references
         }
     
-    def generate_contextual_reformulations(self, message: str, initial_context: str = "") -> list:
-        """Génère des reformulations intelligentes basées sur le vocabulaire des documents indexés"""
-        try:
-            # Si on a un contexte initial des documents, l'utiliser pour guider les reformulations
-            context_hint = ""
-            if initial_context:
-                # Extraire quelques termes clés du contexte pour guider Mistral
-                context_hint = f"\n\nVocabulaire trouvé dans les documents fiscaux indexés:\n{initial_context[:500]}..."
-            
-            prompt = f"""Tu es un expert en recherche documentaire fiscale sénégalaise.
-
-Question de l'utilisateur: "{message}"
-{context_hint}
-
-MISSION: Génère 5 reformulations de cette question pour améliorer la recherche dans les documents fiscaux.
-
-RÈGLES:
-1. Utilise le vocabulaire EXACT des documents fiscaux sénégalais (articles, termes juridiques)
-2. Inclus des numéros d'articles si tu les identifies dans le contexte
-3. Varie entre termes techniques et formulations simples
-4. Garde les mots-clés importants de la question originale
-5. Chaque reformulation sur une ligne, format: "- reformulation"
-
-Réponds UNIQUEMENT avec les 5 reformulations (pas d'explication):"""
-
-            payload = {
-                "model": self.config.OLLAMA_CHAT_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.3,  # Température basse-moyenne pour cohérence
-                    "top_p": 0.9,
-                    "num_ctx": 2048,
-                    "num_predict": 200  # Limite pour 5 reformulations courtes
-                }
-            }
-            
-            response = requests.post(
-                f"{self.config.OLLAMA_BASE_URL}/api/generate",
-                json=payload,
-                timeout=15  # Timeout court pour ne pas ralentir
-            )
-            
-            if response.status_code == 200:
-                reformulations_text = response.json()['response'].strip()
-                # Extraire les reformulations (lignes commençant par - ou numérotées)
-                reformulations = []
-                for line in reformulations_text.split('\n'):
-                    line = line.strip()
-                    # Nettoyer les préfixes (-, 1., etc.)
-                    if line and (line.startswith('-') or (len(line) > 0 and line[0].isdigit())):
-                        clean_line = line.lstrip('-0123456789.° ').strip()
-                        if clean_line and len(clean_line) > 10:  # Ignorer les lignes trop courtes
-                            reformulations.append(clean_line)
-                
-                logger.info(f"🔄 {len(reformulations)} reformulations contextuelles générées par Mistral")
-                return reformulations[:5]  # Max 5 reformulations
-            else:
-                logger.warning(f"⚠️ Erreur génération reformulations (code {response.status_code})")
-                return []
-                
-        except requests.Timeout:
-            logger.warning("⏱️ Timeout reformulations - continuons sans reformulations contextuelles")
-            return []
-        except Exception as e:
-            logger.error(f"❌ Erreur génération reformulations: {e}")
-            return []
-    
     def is_fiscal_related_question(self, message: str) -> bool:
         """Utilise le modèle Mistral pour déterminer si la question est liée à la fiscalité"""
         try:
@@ -2472,42 +1962,314 @@ Je ne peux pas répondre à votre question car elle n'est pas liée au domaine f
                 }
                 
 # RECHERCHE EN MODE RAG STRICT AVEC REFORMULATIONS ET FILTRAGE TEXTUEL
-            logger.info(f"🔍 MODE RAG PUR - Recherche HYBRIDE pour: '{message[:50]}...'")
+            logger.info(f"🔍 Recherche documentaire pour: '{message[:50]}...'")
             
-            # MODE RAG 100% PUR - Recherche hybride uniquement (vectoriel + BM25)
-            # La recherche hybride doit trouver les documents pertinents sans boost manuel
-            logger.info("ℹ️ MODE RAG 100% PUR - Recherche hybride (Vectoriel + BM25)")
+            message_lower = message.lower()
             
-            # Recherche hybride directe avec limite augmentée pour meilleure couverture
-            search_result = self.search_context_with_references(message, limit=20)
+            # ÉTAPE 0: Recherche textuelle directe pour les questions spécifiques
+            # Pour les questions sur le taux de TVA, chercher directement "18" et "TVA"
+            # Pour les questions sur le taux de TAF, chercher directement "17" et "activités financières"
+            direct_search_refs = []
             
-            if search_result.get("context"):
-                context = search_result.get("context", "")
-                references = search_result.get("references", [])
+            # Question sur le taux de TVA
+            if ("taux" in message_lower and "tva" in message_lower) or ("tva" in message_lower and ("combien" in message_lower or "quel" in message_lower)):
+                logger.info("🎯 Détection question sur taux TVA - recherche textuelle directe")
                 
-                logger.info(f"📊 {len(references)} références trouvées par recherche hybride")
+                # Récupérer TOUS les documents de la collection
+                try:
+                    all_docs = self.collection.get(
+                        where={"file_name": "Senegal-Code-des-impot.pdf"},
+                        include=['documents', 'metadatas']
+                    )
+                    
+                    if all_docs and all_docs['documents']:
+                        logger.info(f"📊 Analyse de {len(all_docs['documents'])} documents pour trouver le taux de TVA")
+                        
+                        # Chercher les documents qui contiennent "18" ET ("tva" OU "taxe sur la valeur ajoutée") ET ("taux" OU "fixé")
+                        for idx, doc in enumerate(all_docs['documents']):
+                            doc_lower = doc.lower()
+                            metadata = all_docs['metadatas'][idx] if all_docs['metadatas'] else {}
+                            
+                            # Critères de recherche stricts pour le taux de TVA
+                            has_18 = "18" in doc_lower and ("%" in doc_lower or "pour cent" in doc_lower)
+                            has_tva = "tva" in doc_lower or "taxe sur la valeur ajoutée" in doc_lower
+                            has_taux = "taux" in doc_lower or "fixé" in doc_lower
+                            
+                            if has_18 and has_tva and has_taux:
+                                logger.info(f"✅ TVA TROUVÉE! Document avec '18%' + 'TVA' + 'taux' à la page {metadata.get('page_start', '?')}")
+                                
+                                # Créer une référence avec score maximum
+                                ref = {
+                                    'file_name': metadata.get('file_name', ''),
+                                    'file_path': metadata.get('file_path', ''),
+                                    'page': metadata.get('page_start', 1),
+                                    'page_start': metadata.get('page_start', 1),
+                                    'page_end': metadata.get('page_end', 1),
+                                    'start_line': metadata.get('line_start', 1),
+                                    'end_line': metadata.get('line_end', 1),
+                                    'line_start': metadata.get('line_start', 1),
+                                    'line_end': metadata.get('line_end', 1),
+                                    'article_ref': metadata.get('article_ref', ''),
+                                    'content': doc,
+                                    'snippet': doc[:200] + "..." if len(doc) > 200 else doc,
+                                    '_score': 1000  # Score maximum pour correspondance exacte
+                                }
+                                direct_search_refs.append(ref)
+                        
+                        if direct_search_refs:
+                            logger.info(f"🎯 TVA: {len(direct_search_refs)} références exactes trouvées avec recherche textuelle")
+                except Exception as e:
+                    logger.error(f"Erreur recherche textuelle TVA: {e}")
+            
+            # Question sur le taux de la Taxe sur les Activités Financières (TAF)
+            elif ("taux" in message_lower and ("activités financières" in message_lower or "activite financiere" in message_lower or "activité financière" in message_lower or "taf" in message_lower)):
+                logger.info("🎯 Détection question sur taux TAF - recherche textuelle directe")
                 
-                # Trier par score (déjà fait dans search_context_with_references)
-                references.sort(key=lambda x: x.get('_score', 0), reverse=True)
+                try:
+                    all_docs = self.collection.get(
+                        where={"file_name": "Senegal-Code-des-impot.pdf"},
+                        include=['documents', 'metadatas']
+                    )
+                    
+                    if all_docs and all_docs['documents']:
+                        logger.info(f"📊 Analyse de {len(all_docs['documents'])} documents pour trouver le taux TAF")
+                        
+                        # Chercher: "17" ET ("activités financières" OU "TAF") ET ("taux" OU "%")
+                        for idx, doc in enumerate(all_docs['documents']):
+                            doc_lower = doc.lower()
+                            metadata = all_docs['metadatas'][idx] if all_docs['metadatas'] else {}
+                            
+                            # Critères pour TAF
+                            has_17 = "17" in doc_lower and ("%" in doc_lower or "pour cent" in doc_lower)
+                            has_taf = "activités financières" in doc_lower or "activite financiere" in doc_lower or "taf" in doc_lower
+                            has_taux = "taux" in doc_lower or "taxe" in doc_lower
+                            
+                            # Log de debug pour Article 404
+                            article_ref = metadata.get('article_ref', '')
+                            if "404" in article_ref or (has_17 and has_taf):
+                                logger.info(f"🔍 Article {article_ref}: has_17={has_17}, has_taf={has_taf}, has_taux={has_taux}")
+                            
+                            if has_17 and has_taf and has_taux:
+                                logger.info(f"✅ TAF TROUVÉE! Document avec '17%' + 'activités financières' + 'taux' à l'article {metadata.get('article_ref', '?')}")
+                                
+                                ref = {
+                                    'file_name': metadata.get('file_name', ''),
+                                    'file_path': metadata.get('file_path', ''),
+                                    'page': metadata.get('page_start', 1),
+                                    'page_start': metadata.get('page_start', 1),
+                                    'page_end': metadata.get('page_end', 1),
+                                    'start_line': metadata.get('line_start', 1),
+                                    'end_line': metadata.get('line_end', 1),
+                                    'line_start': metadata.get('line_start', 1),
+                                    'line_end': metadata.get('line_end', 1),
+                                    'article_ref': metadata.get('article_ref', ''),
+                                    'content': doc,
+                                    'snippet': doc[:200] + "..." if len(doc) > 200 else doc,
+                                    '_score': 1000
+                                }
+                                direct_search_refs.append(ref)
+                        
+                        if direct_search_refs:
+                            logger.info(f"🎯 TAF: {len(direct_search_refs)} références exactes trouvées avec recherche textuelle")
+                except Exception as e:
+                    logger.error(f"Erreur recherche textuelle TAF: {e}")
+            
+            # Générer des reformulations de la question pour améliorer la recherche
+            reformulations = [message]  # Toujours inclure la question originale
+            
+            # Pour les questions sur les taux
+            if "quel" in message_lower and "taux" in message_lower and "tva" in message_lower:
+                reformulations.extend([
+                    "Le taux de la TVA est fixé à 18%",
+                    "Article 369 taux TVA dix-huit pour cent",
+                    "taux TVA 18 pourcentage"
+                ])
+            elif "taux" in message_lower and "tva" in message_lower:
+                reformulations.extend([
+                    "Le taux de la TVA est de 18%",
+                    "TVA 18 pourcentage",
+                    "Article taux TVA pourcentage"
+                ])
+            elif "taux" in message_lower and ("activités financières" in message_lower or "activite financiere" in message_lower):
+                reformulations.extend([
+                    "Article 404 taux taxe activités financières",
+                    "taux taxe activités financières 17%",
+                    "taxe activités financières 17 pour cent",
+                    "TAF taux dix-sept pourcent"
+                ])
+            elif "taux" in message_lower and ("activité financière" in message_lower or "activites financieres" in message_lower):
+                reformulations.extend([
+                    "Article 404 taux taxe activités financières",
+                    "taux taxe activités financières 17%",
+                    "taxe activités financières 17 pour cent"
+                ])
+            
+            # Pour les questions sur procédures
+            if "procédure" in message_lower or "comment" in message_lower:
+                reformulations.append(message_lower.replace("comment", "procédure"))
+            
+            # Étape 1: Recherche ÉTENDUE avec toutes les reformulations (augmenter à 20 résultats par requête)
+            all_contexts = []
+            all_references = []
+            all_scores = {}  # Pour tracker le score de pertinence de chaque référence
+            
+            for idx, query in enumerate(reformulations):
+                search_result = self.search_context_with_references(query, limit=20)  # Augmenté de 15 à 20
+                if search_result.get("context"):
+                    all_contexts.append(search_result.get("context", ""))
+                    refs = search_result.get("references", [])
+                    
+                    # Attribuer un score de pertinence basé sur l'ordre de la requête et la position
+                    for pos, ref in enumerate(refs):
+                        ref_key = (ref.get('file_name'), ref.get('page'), ref.get('start_line'))
+                        # Score: première requête = meilleur score, première position = meilleur score
+                        score = (len(reformulations) - idx) * 100 + (15 - pos)
+                        
+                        if ref_key in all_scores:
+                            all_scores[ref_key] = max(all_scores[ref_key], score)  # Garder le meilleur score
+                        else:
+                            all_scores[ref_key] = score
+                        
+                        # Ajouter le score à la référence
+                        ref['_score'] = score
+                    
+                    all_references.extend(refs)
+            
+            # Ajouter les références de recherche textuelle directe (score maximum)
+            if direct_search_refs:
+                logger.info(f"➕ Ajout de {len(direct_search_refs)} références de recherche textuelle directe")
+                all_references.extend(direct_search_refs)
+                # Ajouter aussi leurs contextes
+                for ref in direct_search_refs:
+                    if ref.get('content'):
+                        all_contexts.append(ref['content'])
+            
+            # Dédupliquer, filtrer et trier les résultats par pertinence
+            if all_contexts or direct_search_refs:
+                # VALIDATION DE PERTINENCE STRICTE sur TOUTES les références
+                message_keywords = set(message_lower.replace("?", "").split())
                 
-                # Log des articles trouvés
-                for ref in references[:10]:  # Top 10
-                    article = ref.get('article_ref', 'N/A')
-                    score = ref.get('_score', 0)
-                    logger.info(f"📄 Article {article}, Page {ref.get('page', '?')}, Score {score:.3f}")
+                # Mots-clés spécifiques à détecter
+                looking_for_tva = "tva" in message_lower or "taxe sur la valeur" in message_lower
+                looking_for_taf = "activités financières" in message_lower or "activite financiere" in message_lower or "taf" in message_lower
+                looking_for_douane = "douane" in message_lower or "dédouanement" in message_lower
                 
-                logger.info(f"📄 {len(references)} extraits envoyés au modèle")
-                logger.info(f"🔍 Articles: {[ref.get('article_ref', 'N/A') for ref in references[:5]]}")
+                # Dédupliquer d'abord toutes les références
+                seen_refs = {}
+                for ref in all_references:
+                    ref_key = (ref.get('file_name'), ref.get('page'), ref.get('start_line'))
+                    if ref_key not in seen_refs:
+                        seen_refs[ref_key] = ref
+                    else:
+                        # Garder le score le plus élevé si déjà vu
+                        if ref.get('_score', 0) > seen_refs[ref_key].get('_score', 0):
+                            seen_refs[ref_key] = ref
+                
+                unique_refs = list(seen_refs.values())
+                logger.info(f"📊 {len(unique_refs)} références uniques trouvées")
+                
+                # Filtrer les références non pertinentes
+                filtered_references = []
+                for ref in unique_refs:
+                    # Récupérer le contexte de cette référence
+                    ref_content = ref.get('content', '').lower()
+                    is_relevant = True
+                    
+                    # Si on cherche la TVA, rejeter les contextes qui parlent d'autres taxes
+                    if looking_for_tva:
+                        # Rejeter si c'est une autre taxe (pas TVA)
+                        if "taxe sur les activités financières" in ref_content:
+                            logger.warning(f"⚠️ Rejeté (page {ref.get('page')}): Taxe sur activités financières (pas TVA)")
+                            is_relevant = False
+                        elif "contribution forfaitaire" in ref_content and "tva" not in ref_content:
+                            logger.warning(f"⚠️ Rejeté (page {ref.get('page')}): Contribution forfaitaire (pas TVA)")
+                            is_relevant = False
+                        elif "obligations" in ref_content and "émises" in ref_content and "tva" not in ref_content:
+                            logger.warning(f"⚠️ Rejeté (page {ref.get('page')}): Taux sur obligations (pas TVA)")
+                            is_relevant = False
+                        # Accepter seulement si on trouve "tva" ou "taxe sur la valeur ajoutée"
+                        elif "tva" not in ref_content and "taxe sur la valeur ajoutée" not in ref_content:
+                            logger.warning(f"⚠️ Rejeté (page {ref.get('page')}): Ne mentionne pas explicitement TVA")
+                            is_relevant = False
+                    
+                    # Si on cherche la TAF, rejeter les contextes qui ne parlent PAS de TAF
+                    elif looking_for_taf:
+                        ref_file = ref.get('file_name', '').lower()
+                        # Rejeter si c'est le Code des DOUANES (on veut le Code des Impôts)
+                        if "douane" in ref_file:
+                            logger.warning(f"⚠️ Rejeté: Article {ref.get('article_ref', '?')} du Code des Douanes (on cherche TAF dans Code des Impôts)")
+                            is_relevant = False
+                        # Accepter si contient "financier" ou "financi" (pour gérer l'OCR avec espaces)
+                        elif not any(word in ref_content for word in ["financier", "financi", "taf"]):
+                            logger.warning(f"⚠️ Rejeté (page {ref.get('page')}): Ne mentionne pas activités financières")
+                            is_relevant = False
+                        # Rejeter si c'est la table des matières ou introduction générique
+                        elif ("livre premier" in ref_content or "titre i" in ref_content or "chapitre premier" in ref_content):
+                            # Mais accepter si contient le taux 17
+                            if "17" not in ref_content and "%" not in ref_content:
+                                logger.warning(f"⚠️ Rejeté (page {ref.get('page')}): Table des matières ou introduction (pas le taux)")
+                                is_relevant = False
+                    
+                    if is_relevant:
+                        filtered_references.append(ref)
+                
+                # Trier par score de pertinence (du plus haut au plus bas)
+                filtered_references.sort(key=lambda x: x.get('_score', 0), reverse=True)
+                
+                logger.info(f"✅ {len(filtered_references)} références pertinentes après filtrage")
+                
+                # Prendre les TOP 20 références les plus pertinentes (augmenté de 10 à 20)
+                references = filtered_references[:20]
+                
+                # Construire le contexte à partir de TOUTES les références (pas seulement les 5 meilleures)
+                filtered_contexts = []
+                for ref in references:  # TOUTES les références pour que le modèle les voie
+                    if ref.get('content'):
+                        filtered_contexts.append(ref['content'])
+                
+                # Utiliser TOUS les contextes filtrés (réduit de 10 à 5 pour accélérer)
+                if filtered_contexts:
+                    context = "\n\n".join(filtered_contexts[:5])  # Top 5 contextes au lieu de 10
+                    logger.info(f"📄 Contexte construit à partir de {len(filtered_contexts)} extraits")
+                else:
+                    # Si le filtrage a tout rejeté, réessayer avec recherche plus spécifique
+                    logger.warning("⚠️ Tous les contextes rejetés - Recherche plus spécifique...")
+                    if looking_for_tva:
+                        # Recherche ultra-spécifique pour TVA
+                        specific_query = "Article taux taxe sur la valeur ajoutée TVA"
+                        search_result = self.search_context_with_references(specific_query, limit=15)
+                        context = search_result.get("context", "")
+                        filtered_references = search_result.get("references", [])
+                    elif looking_for_taf:
+                        # Recherche ultra-spécifique pour TAF
+                        specific_query = "Article 404 taux taxe activités financières 17%"
+                        search_result = self.search_context_with_references(specific_query, limit=15)
+                        context = search_result.get("context", "")
+                        filtered_references = search_result.get("references", [])
+                    else:
+                        context = "\n\n".join(all_contexts[:3])  # Fallback sur les résultats non filtrés
+                        filtered_references = all_references
+                
+                # Dédupliquer les références par file_name + page
+                seen = set()
+                unique_refs = []
+                for ref in filtered_references:
+                    key = (ref.get('file_name'), ref.get('page'))
+                    if key not in seen:
+                        seen.add(key)
+                        unique_refs.append(ref)
+                references = unique_refs[:20]  # Augmenté de 10 à 20 références max
+                logger.info(f"✅ Trouvé avec reformulations: {len(reformulations)} variantes testées")
             else:
                 context = ""
                 references = []
             
-            # Fallback: Si toujours aucun résultat, essai avec mots-clés extraits
+            # Étape 2: Si toujours aucun résultat, essai avec mots-clés extraits
             if not context:
                 keywords = [word for word in message.split() if len(word) > 3]
                 if keywords:
                     keyword_query = " ".join(keywords)
-                    logger.info(f"🔄 Recherche fallback avec mots-clés: '{keyword_query}'")
+                    logger.info(f"🔄 Recherche secondaire avec mots-clés: '{keyword_query}'")
                     search_result2 = self.search_context_with_references(keyword_query, limit=10)
                     context = search_result2.get("context", "")
                     references = search_result2.get("references", [])
@@ -2543,32 +2305,100 @@ Je ne peux pas répondre à votre question car elle n'est pas liée au domaine f
                 keyword_found = any(kw in context_lower for kw in question_keywords if len(kw) > 3)
                 
                 if keyword_found or any(keyword in context_lower for keyword in ["impot", "tva", "douane", "fiscal", "cgi", "dgi", "senegal", "sénégal", "article"]):
-                    # Identifier le code source précisément en analysant TOUS les documents
+                    # Identifier le code source précisément pour une réponse ciblée
                     code_source = "Document juridique sénégalais"
-                    sources_trouvees = []
-                    
                     if references:
-                        for ref in references:
-                            file_name = ref.get('file_name', '').lower()
-                            if 'impot' in file_name and 'Code des Impôts du Sénégal' not in sources_trouvees:
-                                sources_trouvees.append('Code des Impôts du Sénégal')
-                            elif 'douane' in file_name and 'Code des Douanes du Sénégal' not in sources_trouvees:
-                                sources_trouvees.append('Code des Douanes du Sénégal')
+                        file_name = references[0].get('file_name', '').lower()
+                        if 'impot' in file_name:
+                            code_source = "Code Général des Impôts (CGI)"
+                        elif 'douane' in file_name:
+                            code_source = "Code des Douanes"
                     
-                    if len(sources_trouvees) == 1:
-                        code_source = sources_trouvees[0]
-                    elif len(sources_trouvees) > 1:
-                        code_source = " ET ".join(sources_trouvees)
-                    else:
-                        code_source = "Documents juridiques sénégalais"
-                    
-                    prompt = f"""TEXTE OFFICIEL: {context}
+                    prompt = f"""Tu es SRMT-DOCUMIND, assistant IA expert en fiscalité et législation douanière sénégalaise.
 
-QUESTION: {message}
+=== CONTEXTE DE LA QUESTION ===
+Question de l'utilisateur: {message}
 
-RÈGLE: Utilise UNIQUEMENT les informations exactes du texte officiel. Ne change aucun chiffre ou pourcentage.
+=== DOCUMENTS JURIDIQUES SÉNÉGALAIS FOURNIS ===
+Source: {code_source.upper()}
 
-Réponds brièvement en expliquant ce que dit le texte."""
+{context}
+
+=== INSTRUCTIONS CRITIQUES - MODE RAG ULTRA-STRICT ===
+
+🎯 MISSION: Extraire et citer EXACTEMENT les informations des documents sans AUCUNE modification
+
+📋 MÉTHODOLOGIE STRICTE EN 4 ÉTAPES:
+
+ÉTAPE 1 - COMPRENDRE LA QUESTION
+• Identifie le SUJET EXACT recherché (ex: "taux de la TVA", "taux de la taxe sur les activités financières")
+• Repère les MOTS-CLÉS précis (TVA, TAF, douane, impôt, procédure, etc.)
+• Détermine si l'utilisateur cherche UN taux spécifique ou PLUSIEURS informations
+
+ÉTAPE 2 - CHERCHER DANS TOUS LES DOCUMENTS FOURNIS
+• Lis TOUS les passages fournis ci-dessus
+• Pour CHAQUE passage, vérifie s'il répond à la question
+• Ne saute AUCUN document pertinent
+• Identifie TOUS les articles qui parlent du sujet demandé
+
+ÉTAPE 3 - VALIDER LA PERTINENCE DE CHAQUE DOCUMENT
+• Pour CHAQUE document trouvé, vérifie qu'il parle EXACTEMENT du sujet demandé
+• NE CONFONDS PAS: "taux de la TVA" ≠ "taux de la taxe sur les activités financières" ≠ "taux de contribution forfaitaire"
+• Si le document parle d'un AUTRE taux ou d'un AUTRE sujet, NE L'INCLUS PAS dans la réponse
+
+ÉTAPE 4 - FORMAT DE RÉPONSE OBLIGATOIRE
+
+⚠️ RÈGLE ABSOLUE: TU DOIS LISTER **TOUTES** LES RÉFÉRENCES TROUVÉES, **PAS DE RÉSUMÉ**
+
+Pour CHAQUE document pertinent trouvé, affiche:
+
+📄 RÉFÉRENCE [numéro]
+Source: [Nom exact du fichier]
+Article: [Numéro exact de l'article]
+Localisation: [Page et lignes si disponibles]
+
+📖 TEXTE EXACT DU DOCUMENT:
+"[COPIE EXACTE du texte de l'article - NE MODIFIE RIEN, NE RÉSUME PAS]"
+
+🔍 RÉPONSE À LA QUESTION:
+[Extrait la réponse précise à la question posée basée sur ce texte]
+
+[SÉPARATEUR]
+---
+
+Répète ce format pour CHAQUE document pertinent (RÉFÉRENCE 1, RÉFÉRENCE 2, RÉFÉRENCE 3, etc.)
+
+⚠️ RÈGLES ABSOLUES - INTERDICTIONS STRICTES:
+❌ NE RÉSUME JAMAIS plusieurs documents en une seule réponse
+❌ NE CITE PAS un taux différent de celui demandé (ex: si on demande TVA, ne cite pas TAF)
+❌ NE MODIFIE PAS les chiffres du document (17% doit rester 17%, pas 6% ou autre)
+❌ NE GÉNÈRE AUCUNE information qui n'est pas dans les documents
+❌ NE MÉLANGE PAS différents types de taux ou d'impôts
+✅ CITE le texte EXACTEMENT comme il apparaît dans le document
+✅ LISTE toutes les références pertinentes séparément
+✅ SI plusieurs articles parlent du même sujet avec des taux différents, LISTE-LES TOUS
+
+=== EXEMPLES ===
+
+Exemple 1 - Question: "Quel est le taux de la taxe sur les activités financières?"
+
+📄 RÉFÉRENCE 1
+Source: Senegal-Code-des-impot.pdf
+Article: Article 404
+Localisation: Page 201, Section II
+
+📖 TEXTE EXACT DU DOCUMENT:
+"Article 404. Le taux de la taxe sur les activités financières est de 17%. Ce taux est réduit à 7% pour les intérêts, commissions et frais perçus à l'occasion de toutes les opérations finançant les ventes à l'exportation."
+
+🔍 RÉPONSE À LA QUESTION:
+Le taux de la taxe sur les activités financières est de 17% (taux général) ou 7% (pour les opérations d'exportation).
+
+---
+
+Exemple 2 - Si AUCUN document ne répond:
+"Les documents fournis ne contiennent pas d'information sur [sujet demandé]."
+
+=== COMMENCE TA RÉPONSE ICI ==="""
                 else:
                     return {
                         "response": f"""⚠️ INFORMATION NON TROUVÉE
@@ -2604,52 +2434,30 @@ Je suis uniquement conçu pour répondre à des questions liées à la fiscalit�
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "temperature": 0.0,      # Température à 0 pour réponses EXACTES - aucune créativité
-                    "top_p": 0.1,           # Top-p très bas pour forcer la sélection des mots les plus probables
-                    "top_k": 1,             # Ne garde que le mot le plus probable à chaque étape
-                    "repeat_penalty": 1.5,   # Pénalité augmentée pour éviter les répétitions inventées
-                    "presence_penalty": 0.5, # Encourage la diversité basée sur le contexte fourni uniquement
-                    "frequency_penalty": 0.3, # Évite les répétitions non fondées
-                    "num_ctx": 4096,        # Contexte limité pour se concentrer sur les documents fournis
-                    "num_predict": 800,     # Limite la longueur pour éviter les divagations
-                    "stop": ["Article 999", "Code fictif", "n'existe pas", "inexistant"]  # Mots-clés d'arrêt d'urgence
+                    "temperature": 0.0,  # Température à 0 pour réponses exactes
+                    "top_p": 0.9,
+                    "repeat_penalty": 1.2,
+                    "num_ctx": 4096  # Contexte réduit pour accélérer (de 8192 à 4096)
                 }
             }
             
-            try:
-                response = requests.post(
-                    f"{self.config.OLLAMA_BASE_URL}/api/generate",
-                    json=payload,
-                    timeout=300  # Timeout augmenté à 5 minutes
-                )
-                
-                if response.status_code == 200:
-                    ollama_response = response.json()['response']
-                    
-                    # 🛡️ VÉRIFICATION ANTI-HALLUCINATION
-                    validated_response = self._validate_response_against_context(ollama_response, context, message)
-                    
-                    return {
-                        "response": validated_response,
-                        "references": references
-                    }
-                elif response.status_code == 504:
-                    # Timeout Mistral (504) - Afficher directement les articles trouvés
-                    logger.warning("⏱️ Timeout Mistral (504) - Affichage direct des articles trouvés")
-                    return self._format_direct_response(message, references)
-                else:
-                    return {
-                        "response": f"❌ Erreur technique (code {response.status_code}). Veuillez réessayer.",
-                        "references": []
-                    }
-            except requests.Timeout:
-                # Timeout de la requête Python - Afficher directement les articles
-                logger.warning("⏱️ Timeout requête Mistral - Affichage direct des articles trouvés")
-                return self._format_direct_response(message, references)
-            except requests.exceptions.RequestException as e:
-                # Autres erreurs réseau - Afficher directement les articles
-                logger.error(f"❌ Erreur réseau Mistral: {e}")
-                return self._format_direct_response(message, references)
+            response = requests.post(
+                f"{self.config.OLLAMA_BASE_URL}/api/generate",
+                json=payload,
+                timeout=300  # Timeout augmenté à 5 minutes
+            )
+            
+            if response.status_code == 200:
+                ollama_response = response.json()['response']
+                return {
+                    "response": ollama_response,
+                    "references": references
+                }
+            else:
+                return {
+                    "response": f"❌ Erreur technique (code {response.status_code}). Veuillez réessayer.",
+                    "references": []
+                }
                 
         except Exception as e:
             logger.error(f"Erreur chat: {e}")
@@ -2657,103 +2465,6 @@ Je suis uniquement conçu pour répondre à des questions liées à la fiscalit�
                 "response": "Une erreur s'est produite. Veuillez réessayer dans un moment.",
                 "references": []
             }
-    
-    def _validate_response_against_context(self, response: str, context: str, original_question: str) -> str:
-        """🛡️ Valide la réponse de Ollama contre le contexte fourni pour détecter les hallucinations"""
-        
-        try:
-            # Extraire les articles mentionnés dans la réponse
-            import re
-            article_pattern = r'Article\s+(\d+)'
-            response_articles = set(re.findall(article_pattern, response, re.IGNORECASE))
-            context_articles = set(re.findall(article_pattern, context, re.IGNORECASE))
-            
-            # Vérifier les chiffres/pourcentages
-            number_pattern = r'(\d+(?:\.\d+)?%|\d+(?:\.\d+)?\s*(?:FCFA|francs))'
-            response_numbers = set(re.findall(number_pattern, response, re.IGNORECASE))
-            context_numbers = set(re.findall(number_pattern, context, re.IGNORECASE))
-            
-            # Détecter les hallucinations potentielles
-            hallucination_detected = False
-            warning_messages = []
-            
-            # 1. Articles inventés
-            invented_articles = response_articles - context_articles
-            if invented_articles:
-                hallucination_detected = True
-                warning_messages.append(f"⚠️ Articles non trouvés dans les documents: {', '.join(invented_articles)}")
-            
-            # 2. Chiffres inventés (tolérance de 5% pour erreurs de transcription)
-            for resp_num in response_numbers:
-                found_similar = False
-                for ctx_num in context_numbers:
-                    # Comparaison exacte d'abord
-                    if resp_num == ctx_num:
-                        found_similar = True
-                        break
-                
-                if not found_similar:
-                    warning_messages.append(f"⚠️ Chiffre suspect non vérifié: {resp_num}")
-            
-            # 3. Mots-clés suspects d'hallucination
-            suspicious_phrases = [
-                "selon mes connaissances", "d'après ce que je sais", "généralement",
-                "habituellement", "en règle générale", "il est probable que",
-                "je pense que", "il me semble", "vraisemblablement"
-            ]
-            
-            for phrase in suspicious_phrases:
-                if phrase.lower() in response.lower():
-                    hallucination_detected = True
-                    warning_messages.append(f"⚠️ Formulation suspecte détectée: '{phrase}'")
-            
-            # 4. Vérification de la cohérence avec le contexte
-            response_lower = response.lower()
-            context_lower = context.lower()
-            
-            # Vérifier que les citations sont présentes dans le contexte
-            if "article" in response_lower and "article" in context_lower:
-                # Si la réponse mentionne du contenu d'article, vérifier qu'il existe dans le contexte
-                response_words = set(response_lower.split())
-                context_words = set(context_lower.split())
-                
-                # Vérifier un minimum de correspondance lexicale
-                common_words = response_words.intersection(context_words)
-                if len(common_words) < min(10, len(response_words) * 0.3):  # Au moins 30% de mots en commun
-                    warning_messages.append("⚠️ Faible correspondance lexicale avec les documents fournis")
-            
-            # Si hallucination détectée, retourner une réponse d'urgence
-            if hallucination_detected:
-                logger.warning(f"🚨 HALLUCINATION DÉTECTÉE: {'; '.join(warning_messages)}")
-                
-                # Réponse de sécurité avec les documents bruts
-                safe_response = f"""🚨 **RÉPONSE SÉCURISÉE - HALLUCINATION DÉTECTÉE**
-
-Je ne peux pas garantir la fiabilité de ma réponse générée. 
-Voici le contenu EXACT des documents trouvés pour votre question: "{original_question}"
-
-**📄 CONTENU BRUT DES DOCUMENTS:**
-{context[:1500]}...
-
-**⚠️ AVERTISSEMENTS DÉTECTÉS:**
-{chr(10).join(warning_messages)}
-
-**🔍 RECOMMANDATION:**
-Consultez directement les documents officiels ou reformulez votre question de manière plus précise."""
-                
-                return safe_response
-            
-            # Si pas d'hallucination détectée, retourner la réponse originale
-            return response
-            
-        except Exception as e:
-            logger.error(f"Erreur validation anti-hallucination: {e}")
-            # En cas d'erreur de validation, retourner la réponse avec avertissement
-            return f"""⚠️ **AVERTISSEMENT - VALIDATION IMPOSSIBLE**
-
-{response}
-
-**Note:** La validation automatique anti-hallucination a échoué. Veuillez vérifier la réponse avec les documents officiels."""
 
 # Template HTML ultra moderne et responsif avec effets
 HTML_TEMPLATE = """
@@ -2762,7 +2473,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LexFin - Assistant Fiscal et Douanier Sénégal</title>
+    <title>SRMT-DOCUMIND - Assistant Fiscal et Douanier Sénégal</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -4280,7 +3991,7 @@ HTML_TEMPLATE = """
     <div class="chat-app">
         <div class="container">
             <div class="chat-header">
-                <h1>🇸🇳 LexFin - MODE RAG STRICT</h1>
+                <h1>🇸🇳 SRMT-DOCUMIND - MODE RAG STRICT</h1>
                 <p>Assistant IA Spécialisé sur Documents Fiscaux • Réponses Exclusives sur Base Documentaire Fiscale</p>
                 <button id="themeToggle" class="theme-toggle" title="Changer de thème">
                     <i class="fa-solid fa-moon"></i>
@@ -4293,7 +4004,7 @@ HTML_TEMPLATE = """
                     <span style="font-size: 48px; filter: drop-shadow(0 2px 8px rgba(0, 133, 63, 0.3));">🇸🇳</span>
                     <div>
                         <div style="font-size: 1.3em; font-weight: 700; color: var(--senegal-green); margin-bottom: 4px;">
-                            Bienvenue sur LexFin
+                            Bienvenue sur SRMT-DOCUMIND
                         </div>
                         <div style="font-size: 0.95em; color: #64748b; font-weight: 500;">
                             Assistant IA Expert en Fiscalité & Douanes du Sénégal
@@ -4338,12 +4049,12 @@ HTML_TEMPLATE = """
                         <span style="font-size: 1.1em;">💡</span> Exemples de Questions
                     </div>
                     <div style="display: grid; gap: 6px; font-size: 0.9em; color: #475569; margin-left: 8px;">
-                        <div style="line-height: 1.5;">• "Que dit l'article 45 du code général des impôts ?"</div>
-                        <div style="line-height: 1.5;">• "Quel est le taux de la TVA au Sénégal ?"</div>
-                        <div style="line-height: 1.5;">• "Comment calculer l'impôt minimum forfaitaire ?"</div>
+                        <div style="line-height: 1.5;">• "Quels sont les taux de TVA selon le Code Général des Impôts ?"</div>
+                        <div style="line-height: 1.5;">• "Quelle est la base imposable de l'impôt minimum forfaitaire ?"</div>
+                        <div style="line-height: 1.5;">• "Comment fonctionne le régime de l'entrepôt de stockage selon le Code des Douanes 2014 ?"</div>
                         <div style="line-height: 1.5;">• "Quelles sont les conditions d'exonération de droits de douane ?"</div>
-                        <div style="line-height: 1.5;">• "Qu'est-ce que le régime de l'entrepôt de stockage ?"</div>
-                        <div style="line-height: 1.5;">• "Comment fonctionne la procédure de dédouanement ?"</div>
+                        <div style="line-height: 1.5;">• "Que dit le Code des Impôts sur les plus-values de cession ?"</div>
+                        <div style="line-height: 1.5;">• "Expliquez la procédure de dédouanement des marchandises"</div>
                     </div>
                 </div>
                 
@@ -4356,7 +4067,7 @@ HTML_TEMPLATE = """
 
             <div class="loading" id="loading">
                 <div class="typing"></div>
-                <span>LexFin analyse votre question fiscal/douanière<span class="loading-dots"></span></span>
+                <span>SRMT-DOCUMIND analyse votre question fiscal/douanière<span class="loading-dots"></span></span>
             </div>
 
             <div class="chat-input-section">
@@ -4522,7 +4233,7 @@ HTML_TEMPLATE = """
                             <span style="font-size: 48px; filter: drop-shadow(0 2px 8px rgba(0, 133, 63, 0.3));">🇸🇳</span>
                             <div>
                                 <div style="font-size: 1.3em; font-weight: 700; color: var(--senegal-green); margin-bottom: 4px;">
-                                    Bienvenue sur LexFin
+                                    Bienvenue sur SRMT-DOCUMIND
                                 </div>
                                 <div style="font-size: 0.95em; color: #64748b; font-weight: 500;">
                                     Assistant IA Expert en Fiscalité & Douanes du Sénégal
@@ -4567,12 +4278,12 @@ HTML_TEMPLATE = """
                                 <span style="font-size: 1.1em;">💡</span> Exemples de Questions
                             </div>
                             <div style="display: grid; gap: 6px; font-size: 0.9em; color: #475569; margin-left: 8px;">
-                                <div style="line-height: 1.5;">• "Que dit l'article 45 du code général des impôts ?"</div>
-                                <div style="line-height: 1.5;">• "Quel est le taux de la TVA au Sénégal ?"</div>
-                                <div style="line-height: 1.5;">• "Comment calculer l'impôt minimum forfaitaire ?"</div>
+                                <div style="line-height: 1.5;">• "Quels sont les taux de TVA selon le Code Général des Impôts ?"</div>
+                                <div style="line-height: 1.5;">• "Quelle est la base imposable de l'impôt minimum forfaitaire ?"</div>
+                                <div style="line-height: 1.5;">• "Comment fonctionne le régime de l'entrepôt de stockage selon le Code des Douanes 2014 ?"</div>
                                 <div style="line-height: 1.5;">• "Quelles sont les conditions d'exonération de droits de douane ?"</div>
-                                <div style="line-height: 1.5;">• "Qu'est-ce que le régime de l'entrepôt de stockage ?"</div>
-                                <div style="line-height: 1.5;">• "Comment fonctionne la procédure de dédouanement ?"</div>
+                                <div style="line-height: 1.5;">• "Que dit le Code des Impôts sur les plus-values de cession ?"</div>
+                                <div style="line-height: 1.5;">• "Expliquez la procédure de dédouanement des marchandises"</div>
                             </div>
                         </div>
                         
@@ -5097,7 +4808,7 @@ HTML_TEMPLATE = """
                         text = clone.textContent.trim();
                     }
                     
-                    if (text && !text.includes('🇸🇳 Bonjour ! Je suis LexFin')) {
+                    if (text && !text.includes('🇸🇳 Bonjour ! Je suis SRMT-DOCUMIND')) {
                         messages.push({
                             type: isUser ? 'user' : 'assistant',
                             content: text,
@@ -5315,7 +5026,7 @@ HTML_TEMPLATE = """
 
     </script>
     
-    <!-- Footer LexFin avec drapeau animé -->
+    <!-- Footer SRMT-DOCUMIND avec drapeau animé -->
     <div class="srmt-footer" style="position: fixed; bottom: 20px; right: 25px; 
                 color: white; font-size: 13px; font-weight: 600;
                 background: linear-gradient(135deg, var(--senegal-green) 0%, #006838 100%);
@@ -5371,7 +5082,7 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
-lexfin_client = LexFinClient()
+srmt_client = SrmtDocumindClient()
 
 @app.route('/')
 def home():
@@ -5391,21 +5102,10 @@ def chat():
                 'references': []
             }), 400
         
-        result = lexfin_client.chat(message)
-        
-        # 🔧 DEBUG: Log des références pour diagnostiquer le problème "undefined"
-        references = result.get('references', [])
-        logger.info(f"🔍 DEBUG RÉFÉRENCES - Nombre: {len(references)}")
-        for i, ref in enumerate(references[:3]):  # Log des 3 premières
-            logger.info(f"  Ref {i+1}:")
-            logger.info(f"    file_name: '{ref.get('file_name', 'MISSING')}'")
-            logger.info(f"    page_info: '{ref.get('page_info', 'MISSING')}'")
-            logger.info(f"    location: '{ref.get('location', 'MISSING')}'")
-            logger.info(f"    snippet: '{ref.get('snippet', 'MISSING')[:50]}...'")
-        
+        result = srmt_client.chat(message)
         return jsonify({
             'response': result.get('response', ''),
-            'references': references
+            'references': result.get('references', [])
         })
         
     except Exception as e:
@@ -5426,7 +5126,7 @@ def open_file():
         if not file_path:
             return jsonify({'error': 'Chemin de fichier manquant'}), 400
         
-        success = lexfin_client.open_file_at_location(file_path, line_number)
+        success = srmt_client.open_file_at_location(file_path, line_number)
         
         if success:
             return jsonify({
@@ -5449,7 +5149,7 @@ def health_check():
     try:
         # Test rapide de connexion Ollama
         test_response = requests.get(
-            f"{lexfin_client.config.OLLAMA_BASE_URL}/api/tags",
+            f"{srmt_client.config.OLLAMA_BASE_URL}/api/tags",
             timeout=5
         )
         ollama_status = "🟢 Connecté" if test_response.status_code == 200 else "🟡 Réponse inattendue"
@@ -5458,7 +5158,7 @@ def health_check():
     
     return jsonify({
         'ollama_status': ollama_status,
-        'server_url': lexfin_client.config.OLLAMA_BASE_URL,
+        'server_url': srmt_client.config.OLLAMA_BASE_URL,
         'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
     })
 
@@ -5469,8 +5169,8 @@ def get_status():
         # Vérifier le statut de la surveillance
         surveillance_status = "Inactive"
         auto_indexing = False
-        if lexfin_client.observer:
-            if lexfin_client.observer.is_alive():
+        if srmt_client.observer:
+            if srmt_client.observer.is_alive():
                 surveillance_status = "🔄 Active (Auto-indexation ON)"
                 auto_indexing = True
             else:
@@ -5478,16 +5178,16 @@ def get_status():
         
         # Lister les fichiers récents non indexés
         recent_files = []
-        for file_path in lexfin_client.watch_dir.rglob('*'):
-            if file_path.is_file() and lexfin_client.is_supported_file(str(file_path)):
-                if not lexfin_client.is_file_already_indexed(str(file_path)):
+        for file_path in srmt_client.watch_dir.rglob('*'):
+            if file_path.is_file() and srmt_client.is_supported_file(str(file_path)):
+                if not srmt_client.is_file_already_indexed(str(file_path)):
                     recent_files.append(str(file_path))
         
         status = {
-            'indexed_files_count': len(lexfin_client.indexed_files),
-            'watch_directory': str(lexfin_client.watch_dir.absolute()),
-            'supported_extensions': lexfin_client.config.SUPPORTED_EXTENSIONS,
-            'indexed_files': [Path(f).name for f in lexfin_client.indexed_files.keys()],
+            'indexed_files_count': len(srmt_client.indexed_files),
+            'watch_directory': str(srmt_client.watch_dir.absolute()),
+            'supported_extensions': srmt_client.config.SUPPORTED_EXTENSIONS,
+            'indexed_files': [Path(f).name for f in srmt_client.indexed_files.keys()],
             'non_indexed_files': [Path(f).name for f in recent_files],
             'surveillance_status': surveillance_status,
             'auto_indexing': auto_indexing
@@ -5504,13 +5204,13 @@ def restart_watcher():
         logger.info("🔄 Redémarrage manuel de la surveillance automatique...")
         
         # Redémarrer la surveillance
-        success = lexfin_client.start_file_watcher()
+        success = srmt_client.start_file_watcher()
         
         if success:
             return jsonify({
                 'message': 'Surveillance automatique redémarrée avec succès',
                 'status': 'active',
-                'watch_directory': str(lexfin_client.watch_dir)
+                'watch_directory': str(srmt_client.watch_dir)
             })
         else:
             return jsonify({
@@ -5530,16 +5230,16 @@ def force_check_new():
         logger.info("🔍 Vérification manuelle des nouveaux fichiers...")
         
         new_files_indexed = 0
-        for file_path in lexfin_client.watch_dir.rglob('*'):
-            if file_path.is_file() and lexfin_client.is_supported_file(str(file_path)):
-                if not lexfin_client.is_file_already_indexed(str(file_path)):
+        for file_path in srmt_client.watch_dir.rglob('*'):
+            if file_path.is_file() and srmt_client.is_supported_file(str(file_path)):
+                if not srmt_client.is_file_already_indexed(str(file_path)):
                     logger.info(f"🆕 Indexation nouveau fichier: {file_path.name}")
-                    lexfin_client.index_file(str(file_path))
+                    srmt_client.index_file(str(file_path))
                     new_files_indexed += 1
         
         return jsonify({
             'message': f'{new_files_indexed} nouveaux fichiers indexés',
-            'total_indexed': len(lexfin_client.indexed_files)
+            'total_indexed': len(srmt_client.indexed_files)
         })
         
     except Exception as e:
@@ -5555,25 +5255,25 @@ def force_full_reindex():
         
         # Lister tous les fichiers supportés
         supported_files = []
-        for file_path in lexfin_client.watch_dir.rglob('*'):
-            if file_path.is_file() and lexfin_client.is_supported_file(str(file_path)):
+        for file_path in srmt_client.watch_dir.rglob('*'):
+            if file_path.is_file() and srmt_client.is_supported_file(str(file_path)):
                 supported_files.append(str(file_path))
         
         # VIDER COMPLÈTEMENT le cache et ChromaDB
-        lexfin_client.indexed_files.clear()
+        srmt_client.indexed_files.clear()
         try:
-            if hasattr(lexfin_client, 'collection') and lexfin_client.collection:
-                lexfin_client.create_vector_store()
+            if hasattr(srmt_client, 'collection') and srmt_client.collection:
+                srmt_client.create_vector_store()
                 logger.info("🗑️ Base vectorielle et cache complètement vidés")
         except Exception as e:
             logger.warning(f"  Erreur vidage: {e}")
         
         # Indexation complète
-        lexfin_client.scan_existing_files()
+        srmt_client.scan_existing_files()
         
         return jsonify({
             'message': f'Réindexation COMPLÈTE terminée: {len(supported_files)} fichiers retraités',
-            'indexed_count': len(lexfin_client.indexed_files),
+            'indexed_count': len(srmt_client.indexed_files),
             'files_found': len(supported_files),
             'cache_cleared': True
         })
@@ -5586,12 +5286,12 @@ def smart_reindex():
     """Réindexation intelligente (respecte le cache des fichiers déjà indexés)"""
     try:
         # Diagnostic avant indexation
-        logger.info(f"🔍 Scan du dossier: {lexfin_client.config.WATCH_DIRECTORY}")
+        logger.info(f"🔍 Scan du dossier: {srmt_client.config.WATCH_DIRECTORY}")
         
         # Lister tous les fichiers supportés
         supported_files = []
-        for file_path in lexfin_client.watch_dir.rglob('*'):
-            if file_path.is_file() and lexfin_client.is_supported_file(str(file_path)):
+        for file_path in srmt_client.watch_dir.rglob('*'):
+            if file_path.is_file() and srmt_client.is_supported_file(str(file_path)):
                 supported_files.append(str(file_path))
         
         logger.info(f"   {len(supported_files)} fichiers supportés trouvés:")
@@ -5600,37 +5300,37 @@ def smart_reindex():
         
         # Vider le cache ChromaDB complètement
         try:
-            if hasattr(lexfin_client, 'collection') and lexfin_client.collection:
-                lexfin_client.create_vector_store()
+            if hasattr(srmt_client, 'collection') and srmt_client.collection:
+                srmt_client.create_vector_store()
                 logger.info("🗑️ Base vectorielle vidée complètement")
             else:
                 logger.info("🔄 Création nouvelle base vectorielle")
-                lexfin_client.create_vector_store()
+                srmt_client.create_vector_store()
         except Exception as e:
             logger.warning(f"  Erreur vidage base: {e}")
             # Fallback : créer une nouvelle collection
             try:
-                lexfin_client.create_vector_store()
+                srmt_client.create_vector_store()
             except Exception as e2:
                 logger.error(f"  Erreur création base: {e2}")
         
         # NE PAS vider le cache local - garder la mémoire des fichiers indexés
-        # lexfin_client.indexed_files.clear()  # COMMENTÉ pour éviter réindexation
+        # srmt_client.indexed_files.clear()  # COMMENTÉ pour éviter réindexation
         
         # Relancer le scan avec respect du cache
         try:
-            lexfin_client.scan_existing_files()
-            already_indexed = len([f for f in supported_files if lexfin_client.is_file_already_indexed(f)])
-            newly_indexed = len(lexfin_client.indexed_files) - already_indexed
+            srmt_client.scan_existing_files()
+            already_indexed = len([f for f in supported_files if srmt_client.is_file_already_indexed(f)])
+            newly_indexed = len(srmt_client.indexed_files) - already_indexed
             message = f'Scan terminé: {already_indexed} déjà indexés, {newly_indexed} nouveaux fichiers traités'
-            logger.info(f"✅ Indexation terminée: {len(lexfin_client.indexed_files)} fichiers au total")
+            logger.info(f"✅ Indexation terminée: {len(srmt_client.indexed_files)} fichiers au total")
         except Exception as e:
             logger.error(f"Erreur lors de l'indexation: {e}")
             message = f'Réindexation échouée: Vérifiez la connexion Ollama'
         
         return jsonify({
             'message': message,
-            'indexed_count': len(lexfin_client.indexed_files),
+            'indexed_count': len(srmt_client.indexed_files),
             'files_found': len(supported_files),
             'files_list': [Path(f).name for f in supported_files[:5]]  # Top 5 files
         })
@@ -5642,10 +5342,10 @@ def smart_reindex():
 def start_indexing():
     """Démarre l'indexation initiale"""
     try:
-        lexfin_client.scan_existing_files()
+        srmt_client.scan_existing_files()
         return jsonify({
             'message': 'Indexation démarrée',
-            'indexed_count': len(lexfin_client.indexed_files)
+            'indexed_count': len(srmt_client.indexed_files)
         })
     except Exception as e:
         logger.error(f"Erreur start_indexing: {e}")
@@ -5658,17 +5358,17 @@ def diagnostic_files():
         # Lister tous les fichiers du dossier
         all_files = []
         supported_files = []
-        indexed_files = list(lexfin_client.indexed_files.keys())
+        indexed_files = list(srmt_client.indexed_files.keys())
         
-        for file_path in lexfin_client.watch_dir.rglob('*'):
+        for file_path in srmt_client.watch_dir.rglob('*'):
             if file_path.is_file():
                 all_files.append(str(file_path))
-                if lexfin_client.is_supported_file(str(file_path)):
+                if srmt_client.is_supported_file(str(file_path)):
                     supported_files.append(str(file_path))
         
         # Compter les éléments dans ChromaDB avec diagnostic
         try:
-            collection_count = lexfin_client.vector_store.count()
+            collection_count = srmt_client.vector_store.count()
             logger.info(f"📊 ChromaDB count: {collection_count}")
         except Exception as e:
             logger.error(f"  Erreur ChromaDB count: {e}")
@@ -5677,7 +5377,7 @@ def diagnostic_files():
         # Vérifier la collection elle-même
         try:
             # Essayer de récupérer quelques documents pour tester
-            test_results = lexfin_client.vector_store.peek(limit=5)
+            test_results = srmt_client.vector_store.peek(limit=5)
             actual_chunks = len(test_results.get('documents', []))
             logger.info(f"🔍 Documents réels dans ChromaDB: {actual_chunks}")
             if actual_chunks > collection_count:
@@ -5686,7 +5386,7 @@ def diagnostic_files():
             logger.warning(f"  Erreur peek ChromaDB: {e}")
         
         return jsonify({
-            'dossier_surveille': lexfin_client.config.WATCH_DIRECTORY,
+            'dossier_surveille': srmt_client.config.WATCH_DIRECTORY,
             'fichiers_totaux': len(all_files),
             'fichiers_supportes': len(supported_files),
             'fichiers_indexes': len(indexed_files),
@@ -5712,11 +5412,11 @@ def debug_context():
             return jsonify({'error': 'Query manquante'}), 400
         
         # Recherche avec debug
-        context = lexfin_client.search_context(query, limit=3)
+        context = srmt_client.search_context(query, limit=3)
         
         # Récupérer aussi quelques documents de ChromaDB
         try:
-            sample_docs = lexfin_client.collection.peek(limit=3)
+            sample_docs = srmt_client.collection.peek(limit=3)
             sample_content = sample_docs.get('documents', [])[:3] if sample_docs else []
         except:
             sample_content = []
@@ -5726,7 +5426,7 @@ def debug_context():
             'context_found': context,
             'context_length': len(context) if context else 0,
             'sample_documents': sample_content,
-            'collection_count': lexfin_client.collection.count() if lexfin_client.collection else 0
+            'collection_count': srmt_client.collection.count() if srmt_client.collection else 0
         })
         
     except Exception as e:
@@ -5736,20 +5436,20 @@ def debug_context():
 def cleanup():
     """Nettoyage à la fermeture"""
     try:
-        if hasattr(lexfin_client, 'observer') and lexfin_client.observer:
-            lexfin_client.observer.stop()
-            lexfin_client.observer.join()
+        if hasattr(srmt_client, 'observer') and srmt_client.observer:
+            srmt_client.observer.stop()
+            srmt_client.observer.join()
             logger.info("🛑 Surveillance arrêtée proprement")
     except Exception as e:
         logger.error(f"Erreur lors de l'arrêt: {e}")
 
-def app_lexfin():
-    """Lance l'application LexFin"""
-    print("🇸🇳 Démarrage de LexFin - Assistant Fiscal & Douanier Sénégal...")
+def app_srmt_documind():
+    """Lance l'application SRMT-DOCUMIND"""
+    print("🇸🇳 Démarrage de SRMT-DOCUMIND - Assistant Fiscal & Douanier Sénégal...")
     print("=" * 70)
-    print(f"🔗 URL Ollama: {LexFinConfig.OLLAMA_BASE_URL}")
-    print(f"🤖 Modèle IA: {LexFinConfig.OLLAMA_CHAT_MODEL}")
-    print(f"📁 Répertoire surveillé: {LexFinConfig.WATCH_DIRECTORY}")
+    print(f"🔗 URL Ollama: {SrmtDocumindConfig.OLLAMA_BASE_URL}")
+    print(f"🤖 Modèle IA: {SrmtDocumindConfig.OLLAMA_CHAT_MODEL}")
+    print(f"📁 Répertoire surveillé: {SrmtDocumindConfig.WATCH_DIRECTORY}")
     print("🏛️ Spécialisation: Code des Impôts & Code des Douanes Sénégal")
     print("🌐 Démarrage de l'interface web...")
     
@@ -5760,7 +5460,7 @@ def app_lexfin():
             debug=False
         )
     except KeyboardInterrupt:
-        print("\n👋 Arrêt de LexFin...")
+        print("\n👋 Arrêt de SRMT-DOCUMIND...")
         cleanup()
     except Exception as e:
         print(f"❌ Erreur: {e}")
@@ -5769,4 +5469,4 @@ def app_lexfin():
 if __name__ == "__main__":
     import atexit
     atexit.register(cleanup)
-    app_lexfin()
+    app_srmt_documind()

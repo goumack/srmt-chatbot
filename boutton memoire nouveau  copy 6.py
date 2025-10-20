@@ -1,5 +1,5 @@
 """
-LexFin - Assistant IA Spécialisé Fiscal et Douanier (MODE RAG STRICT)
+SRMT-DOCUMIND - Assistant IA Spécialisé Fiscal et Douanier (MODE RAG STRICT)
 Assistant IA intelligent pour les contribuables sénégalais
 Focalisé exclusivement sur les documents fiscaux et douaniers indexés
 Version optimisée - Mode RAG strict - Réponses basées uniquement sur les documents
@@ -91,8 +91,8 @@ class BM25:
         
         return score
 
-class LexFinConfig:
-    """Configuration LexFin - Assistant Fiscal et Douanier"""
+class SrmtDocumindConfig:
+    """Configuration SRMT-DOCUMIND - Assistant Fiscal et Douanier"""
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ollamaaccel-chatbotaccel.apps.senum.heritage.africa")
     OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "mistral:7b")
     OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
@@ -103,8 +103,8 @@ class LexFinConfig:
 class DocumentWatcherHandler(FileSystemEventHandler):
     """Gestionnaire de surveillance automatique en arrière-plan"""
     
-    def __init__(self, lexfin_client):
-        self.lexfin_client = lexfin_client
+    def __init__(self, srmt_client):
+        self.srmt_client = srmt_client
         self.processing_queue = []
         self.last_processed = {}
         super().__init__()
@@ -125,8 +125,8 @@ class DocumentWatcherHandler(FileSystemEventHandler):
         def delayed_process():
             try:
                 time.sleep(2)  # Attendre que le fichier soit complètement écrit
-                if self.lexfin_client.is_supported_file(file_path):
-                    self.lexfin_client.process_new_file_background(file_path)
+                if self.srmt_client.is_supported_file(file_path):
+                    self.srmt_client.process_new_file_background(file_path)
                     logger.info(f" [AUTO] Fichier indexé automatiquement: {Path(file_path).name}")
                 else:
                     logger.debug(f"⏭ [AUTO] Fichier ignoré (format non supporté): {Path(file_path).name}")
@@ -160,8 +160,8 @@ class DocumentWatcherHandler(FileSystemEventHandler):
             def delayed_reprocess():
                 try:
                     time.sleep(1)  # Attendre la fin de l'écriture
-                    if self.lexfin_client.is_supported_file(file_path):
-                        self.lexfin_client.process_modified_file_background(file_path)
+                    if self.srmt_client.is_supported_file(file_path):
+                        self.srmt_client.process_modified_file_background(file_path)
                         logger.info(f" [AUTO] Fichier réindexé automatiquement: {Path(file_path).name}")
                 except Exception as e:
                     logger.error(f" [AUTO] Erreur réindexation automatique {Path(file_path).name}: {e}")
@@ -170,11 +170,11 @@ class DocumentWatcherHandler(FileSystemEventHandler):
             thread = threading.Thread(target=delayed_reprocess, daemon=True)
             thread.start()
 
-class LexFinClient:
-    """Client LexFin optimisé avec surveillance automatique pour la fiscalité et douanes sénégalaises"""
+class SrmtDocumindClient:
+    """Client SRMT-DOCUMIND optimisé avec surveillance automatique pour la fiscalité et douanes sénégalaises"""
     
     def __init__(self):
-        self.config = LexFinConfig()
+        self.config = SrmtDocumindConfig()
         self.indexed_files = {}  # Cache des fichiers indexés {path: hash}
         self.observer = None  # Référence au watcher
         self.setup_chroma()
@@ -1519,21 +1519,38 @@ class LexFinClient:
             return {"context": "", "references": []}
         
         try:
-            # 🔥 TEMPORAIRE: Désactiver le système hiérarchique pour corriger les références
-            # self._init_hierarchie_client()  # Initialiser à la demande
+            # 🔥 NOUVEAU: Utiliser le système hiérarchique V2.0 en priorité
+            self._init_hierarchie_client()  # Initialiser à la demande
             
-            # if self.hierarchie_client:
-            #     logger.info("🏛️ Utilisation du système hiérarchique V2.0")
-            #     hierarchie_result = self.hierarchie_client.rechercher_hierarchique(query)
-            #     
-            #     if hierarchie_result.get("context") and hierarchie_result.get("references"):
-            #         logger.info(f"✅ Résultat hiérarchique trouvé: {hierarchie_result.get('type_recherche', 'N/A')}")
-            #         return hierarchie_result
-            #     else:
-            #         logger.info("⚠️ Système hiérarchique: aucun résultat, fallback vers recherche classique")
+            if self.hierarchie_client:
+                logger.info("🏛️ Utilisation du système hiérarchique V2.0")
+                hierarchie_result = self.hierarchie_client.rechercher_hierarchique(query)
+                
+                if hierarchie_result.get("context") and hierarchie_result.get("references"):
+                    logger.info(f"✅ Résultat hiérarchique trouvé: {hierarchie_result.get('type_recherche', 'N/A')}")
+                    
+                    # Adapter le format pour compatibilité
+                    adapted_references = []
+                    for ref in hierarchie_result["references"][:limit]:
+                        adapted_ref = {
+                            "article_ref": ref.get("article_ref", "Document juridique"),
+                            "snippet": ref.get("snippet", ""),
+                            "metadata": ref.get("metadata", {}),
+                            "score": ref.get("score_contextuel", ref.get("score_hierarchique", 0))
+                        }
+                        adapted_references.append(adapted_ref)
+                    
+                    return {
+                        "context": hierarchie_result["context"],
+                        "references": adapted_references,
+                        "type_recherche": hierarchie_result.get("type_recherche", "hierarchique"),
+                        "analyse": hierarchie_result.get("analyse", {})
+                    }
+                else:
+                    logger.info("⚠️ Système hiérarchique: aucun résultat, fallback vers recherche classique")
             
-            # Utiliser directement la recherche classique qui fonctionne bien
-            logger.info("🔄 Utilisation recherche classique (temporaire - références correctes)")
+            # Fallback vers la recherche classique si système hiérarchique indisponible ou sans résultat
+            logger.info("🔄 Utilisation recherche classique (fallback)")
             
             # Détecter le domaine de la question
             query_domain = self.detect_query_domain(query)
@@ -1882,35 +1899,10 @@ class LexFinClient:
                 doc = result['document']
                 metadata = result['metadata']
                 
-                # 🔧 CORRECTION: Ajouter les propriétés manquantes pour JavaScript
-                page_start = metadata.get('page_start', 1)
-                page_end = metadata.get('page_end', page_start)
-                line_start = metadata.get('line_start', 1)
-                line_end = metadata.get('line_end', line_start)
-                file_path = metadata.get('file_path', '')
-                
-                # Créer page_info et location comme dans search_context_with_references
-                if page_start == page_end:
-                    page_info = f"page {page_start}"
-                else:
-                    page_info = f"pages {page_start}-{page_end}"
-                
-                if line_start == line_end:
-                    location = f"ligne {line_start}"
-                else:
-                    location = f"lignes {line_start}-{line_end}"
-                
                 reference = {
                     'file_name': metadata.get('file_name', 'Document'),
-                    'file_path': file_path,
                     'article_ref': metadata.get('article_ref', f'Article {article_numbers[0]}'),
-                    'page': page_start,  # Garder l'ancienne propriété pour compatibilité
-                    'page_info': page_info,  # ✅ Nouvelle propriété attendue par JavaScript
-                    'location': location,    # ✅ Nouvelle propriété attendue par JavaScript
-                    'line_start': line_start, # ✅ Propriété attendue par JavaScript
-                    'line_end': line_end,     # ✅ Propriété attendue par JavaScript
-                    'page_start': page_start,
-                    'page_end': page_end,
+                    'page': metadata.get('page_start', 1),
                     'content': doc,
                     '_score': result['priority_score'],
                     'snippet': doc[:300] + "..." if len(doc) > 300 else doc
@@ -2043,7 +2035,7 @@ class LexFinClient:
     def generate_greeting_response(self, message: str) -> str:
         """Génère une réponse simplifiée aux salutations - Mode RAG strict"""
         # En mode RAG strict, réponse unique et courte qui rappelle la spécialisation fiscale
-        return """Bonjour ! Je suis LexFin, votre assistant IA spécialisé UNIQUEMENT en fiscalité sénégalaise.
+        return """Bonjour ! Je suis SRMT-DOCUMIND, votre assistant IA spécialisé UNIQUEMENT en fiscalité sénégalaise.
 
 ⚠️ MODE RAG STRICT : Je réponds exclusivement sur la base des documents fiscaux indexés.
 
@@ -2241,14 +2233,14 @@ class LexFinClient:
         """Génère une réponse naturelle aux salutations en utilisant Mistral directement"""
         try:
             # Prompt pour que Mistral réponde naturellement aux salutations
-            greeting_prompt = f"""Tu es LexFin, un assistant IA intelligent spécialisé pour les contribuables sénégalais en fiscalité et douanes.
+            greeting_prompt = f"""Tu es SRMT-DOCUMIND, un assistant IA intelligent spécialisé pour les contribuables sénégalais en fiscalité et douanes.
 
 L'utilisateur te dit: "{message}"
 
 IMPORTANT: Tu es un expert en Code des Impôts et Code des Douanes du Sénégal. Tu aides les contribuables sénégalais avec leurs questions fiscales et douanières.
 
 Réponds de façon naturelle et professionnelle:
-- Présente-toi comme LexFin, l'assistant expert fiscal et douanier sénégalais
+- Présente-toi comme SRMT-DOCUMIND, l'assistant expert fiscal et douanier sénégalais
 - Précise tes spécialités : Code des Impôts, Code des Douanes, DGI, procédures fiscales
 - Mentionne que tu peux analyser documents administratifs (PDF, Word, Excel)
 - Reste professionnel et utilisé des émojis appropriés (🇸🇳, 🏛️, 📋)
@@ -2543,32 +2535,75 @@ Je ne peux pas répondre à votre question car elle n'est pas liée au domaine f
                 keyword_found = any(kw in context_lower for kw in question_keywords if len(kw) > 3)
                 
                 if keyword_found or any(keyword in context_lower for keyword in ["impot", "tva", "douane", "fiscal", "cgi", "dgi", "senegal", "sénégal", "article"]):
-                    # Identifier le code source précisément en analysant TOUS les documents
+                    # Identifier le code source précisément pour une réponse ciblée
                     code_source = "Document juridique sénégalais"
-                    sources_trouvees = []
-                    
                     if references:
-                        for ref in references:
-                            file_name = ref.get('file_name', '').lower()
-                            if 'impot' in file_name and 'Code des Impôts du Sénégal' not in sources_trouvees:
-                                sources_trouvees.append('Code des Impôts du Sénégal')
-                            elif 'douane' in file_name and 'Code des Douanes du Sénégal' not in sources_trouvees:
-                                sources_trouvees.append('Code des Douanes du Sénégal')
+                        file_name = references[0].get('file_name', '').lower()
+                        if 'impot' in file_name:
+                            code_source = "Code Général des Impôts (CGI)"
+                        elif 'douane' in file_name:
+                            code_source = "Code des Douanes"
                     
-                    if len(sources_trouvees) == 1:
-                        code_source = sources_trouvees[0]
-                    elif len(sources_trouvees) > 1:
-                        code_source = " ET ".join(sources_trouvees)
-                    else:
-                        code_source = "Documents juridiques sénégalais"
-                    
-                    prompt = f"""TEXTE OFFICIEL: {context}
+                    prompt = f"""Tu es SRMT-DOCUMIND, assistant IA expert en fiscalité et législation douanière sénégalaise.
 
 QUESTION: {message}
 
-RÈGLE: Utilise UNIQUEMENT les informations exactes du texte officiel. Ne change aucun chiffre ou pourcentage.
+DOCUMENTS FOURNIS ({code_source.upper()}):
+{context}
 
-Réponds brièvement en expliquant ce que dit le texte."""
+=== INSTRUCTIONS CRITIQUES ===
+
+🎯 TA MISSION:
+Analyse les documents fournis et réponds à la question en citant EXACTEMENT les textes trouvés.
+
+⚠️ RÈGLES ABSOLUES - ZÉRO HALLUCINATION:
+
+1. TU NE DOIS RÉPONDRE QU'AVEC CE QUI EST DANS LES DOCUMENTS CI-DESSUS
+   - Cite les articles tels qu'ils apparaissent (ex: Article 404, Article 408)
+   - Copie les chiffres/taux EXACTEMENT comme écrits (17% reste 17%, pas 6% ou autre chose)
+   - Ne change RIEN au texte original
+
+2. ⚠️ CITE **UNIQUEMENT** LES ARTICLES QUI EXISTENT DANS LES DOCUMENTS:
+   - NE CITE QUE ce qui est réellement présent dans les documents ci-dessus
+   - Si un article existe dans le Code des Impôts mais PAS dans le Code des Douanes: CITE SEULEMENT celui du Code des Impôts
+   - Si tu vois plusieurs articles avec le MÊME NUMÉRO dans DIFFÉRENTES sources: CITE-LES TOUS séparément
+   - IMPORTANT: N'invente JAMAIS qu'un article "n'existe pas" dans une source si tu ne l'as pas trouvé
+   
+3. FORMAT DE RÉPONSE OBLIGATOIRE:
+   📄 **Article XXX (Source: Code des Impôts)** 
+   "Citation exacte du texte trouvé..."
+   
+   [SEULEMENT si tu trouves le même article dans les deux codes:]
+   📄 **Article XXX (Source: Code des Douanes)**  
+   "Citation exacte du texte trouvé..."
+
+4. SI AUCUN DOCUMENT NE RÉPOND:
+   - Dis clairement: "Les documents fournis ne contiennent pas d'information sur [sujet demandé]"
+   - N'invente JAMAIS d'articles ou de textes juridiques
+   - Ne déduis pas, ne suppose pas, n'extrapole pas
+   
+5. ❌ NE DIS JAMAIS "Aucun article avec ce numéro n'est présent" POUR UNE SOURCE:
+   - Si tu ne trouves pas un article dans une source, IGNORE cette source
+   - CITE SEULEMENT les articles que tu vois réellement dans les documents
+   - N'essaie pas de "compléter" en mentionnant ce qui n'existe pas
+
+6. INTERDICTIONS STRICTES:
+   ❌ N'invente pas de numéros d'articles (ex: Article 238-0 n'existe pas si pas mentionné)
+   ❌ Ne fabrique pas de texte juridique
+   ❌ Ne modifie pas les chiffres
+   ❌ NE FILTRE PAS - cite TOUT ce qui est dans les documents ci-dessus
+
+� RAPPEL CRITIQUE:
+Tu es un assistant juridique. Une erreur peut avoir des conséquences légales graves.
+PRÉCISION = ZÉRO TOLÉRANCE pour les inventions.
+
+🚨 DERNIÈRE VÉRIFICATION AVANT RÉPONSE:
+1. Ai-je vérifié que chaque article cité existe dans les documents ci-dessus?
+2. Ai-je copié exactement les chiffres sans les modifier?
+3. Ai-je évité d'inventer du contenu non présent dans les documents?
+4. Ma réponse ne contient-elle QUE ce qui est dans les documents fournis?
+
+MAINTENANT, analyse uniquement les documents fournis et réponds en respectant ABSOLUMENT ces règles:"""
                 else:
                     return {
                         "response": f"""⚠️ INFORMATION NON TROUVÉE
@@ -2762,7 +2797,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LexFin - Assistant Fiscal et Douanier Sénégal</title>
+    <title>SRMT-DOCUMIND - Assistant Fiscal et Douanier Sénégal</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -4280,7 +4315,7 @@ HTML_TEMPLATE = """
     <div class="chat-app">
         <div class="container">
             <div class="chat-header">
-                <h1>🇸🇳 LexFin - MODE RAG STRICT</h1>
+                <h1>🇸🇳 SRMT-DOCUMIND - MODE RAG STRICT</h1>
                 <p>Assistant IA Spécialisé sur Documents Fiscaux • Réponses Exclusives sur Base Documentaire Fiscale</p>
                 <button id="themeToggle" class="theme-toggle" title="Changer de thème">
                     <i class="fa-solid fa-moon"></i>
@@ -4293,7 +4328,7 @@ HTML_TEMPLATE = """
                     <span style="font-size: 48px; filter: drop-shadow(0 2px 8px rgba(0, 133, 63, 0.3));">🇸🇳</span>
                     <div>
                         <div style="font-size: 1.3em; font-weight: 700; color: var(--senegal-green); margin-bottom: 4px;">
-                            Bienvenue sur LexFin
+                            Bienvenue sur SRMT-DOCUMIND
                         </div>
                         <div style="font-size: 0.95em; color: #64748b; font-weight: 500;">
                             Assistant IA Expert en Fiscalité & Douanes du Sénégal
@@ -4338,12 +4373,12 @@ HTML_TEMPLATE = """
                         <span style="font-size: 1.1em;">💡</span> Exemples de Questions
                     </div>
                     <div style="display: grid; gap: 6px; font-size: 0.9em; color: #475569; margin-left: 8px;">
-                        <div style="line-height: 1.5;">• "Que dit l'article 45 du code général des impôts ?"</div>
-                        <div style="line-height: 1.5;">• "Quel est le taux de la TVA au Sénégal ?"</div>
-                        <div style="line-height: 1.5;">• "Comment calculer l'impôt minimum forfaitaire ?"</div>
+                        <div style="line-height: 1.5;">• "Quels sont les taux de TVA selon le Code Général des Impôts ?"</div>
+                        <div style="line-height: 1.5;">• "Quelle est la base imposable de l'impôt minimum forfaitaire ?"</div>
+                        <div style="line-height: 1.5;">• "Comment fonctionne le régime de l'entrepôt de stockage selon le Code des Douanes 2014 ?"</div>
                         <div style="line-height: 1.5;">• "Quelles sont les conditions d'exonération de droits de douane ?"</div>
-                        <div style="line-height: 1.5;">• "Qu'est-ce que le régime de l'entrepôt de stockage ?"</div>
-                        <div style="line-height: 1.5;">• "Comment fonctionne la procédure de dédouanement ?"</div>
+                        <div style="line-height: 1.5;">• "Que dit le Code des Impôts sur les plus-values de cession ?"</div>
+                        <div style="line-height: 1.5;">• "Expliquez la procédure de dédouanement des marchandises"</div>
                     </div>
                 </div>
                 
@@ -4356,7 +4391,7 @@ HTML_TEMPLATE = """
 
             <div class="loading" id="loading">
                 <div class="typing"></div>
-                <span>LexFin analyse votre question fiscal/douanière<span class="loading-dots"></span></span>
+                <span>SRMT-DOCUMIND analyse votre question fiscal/douanière<span class="loading-dots"></span></span>
             </div>
 
             <div class="chat-input-section">
@@ -4522,7 +4557,7 @@ HTML_TEMPLATE = """
                             <span style="font-size: 48px; filter: drop-shadow(0 2px 8px rgba(0, 133, 63, 0.3));">🇸🇳</span>
                             <div>
                                 <div style="font-size: 1.3em; font-weight: 700; color: var(--senegal-green); margin-bottom: 4px;">
-                                    Bienvenue sur LexFin
+                                    Bienvenue sur SRMT-DOCUMIND
                                 </div>
                                 <div style="font-size: 0.95em; color: #64748b; font-weight: 500;">
                                     Assistant IA Expert en Fiscalité & Douanes du Sénégal
@@ -4567,12 +4602,12 @@ HTML_TEMPLATE = """
                                 <span style="font-size: 1.1em;">💡</span> Exemples de Questions
                             </div>
                             <div style="display: grid; gap: 6px; font-size: 0.9em; color: #475569; margin-left: 8px;">
-                                <div style="line-height: 1.5;">• "Que dit l'article 45 du code général des impôts ?"</div>
-                                <div style="line-height: 1.5;">• "Quel est le taux de la TVA au Sénégal ?"</div>
-                                <div style="line-height: 1.5;">• "Comment calculer l'impôt minimum forfaitaire ?"</div>
+                                <div style="line-height: 1.5;">• "Quels sont les taux de TVA selon le Code Général des Impôts ?"</div>
+                                <div style="line-height: 1.5;">• "Quelle est la base imposable de l'impôt minimum forfaitaire ?"</div>
+                                <div style="line-height: 1.5;">• "Comment fonctionne le régime de l'entrepôt de stockage selon le Code des Douanes 2014 ?"</div>
                                 <div style="line-height: 1.5;">• "Quelles sont les conditions d'exonération de droits de douane ?"</div>
-                                <div style="line-height: 1.5;">• "Qu'est-ce que le régime de l'entrepôt de stockage ?"</div>
-                                <div style="line-height: 1.5;">• "Comment fonctionne la procédure de dédouanement ?"</div>
+                                <div style="line-height: 1.5;">• "Que dit le Code des Impôts sur les plus-values de cession ?"</div>
+                                <div style="line-height: 1.5;">• "Expliquez la procédure de dédouanement des marchandises"</div>
                             </div>
                         </div>
                         
@@ -5097,7 +5132,7 @@ HTML_TEMPLATE = """
                         text = clone.textContent.trim();
                     }
                     
-                    if (text && !text.includes('🇸🇳 Bonjour ! Je suis LexFin')) {
+                    if (text && !text.includes('🇸🇳 Bonjour ! Je suis SRMT-DOCUMIND')) {
                         messages.push({
                             type: isUser ? 'user' : 'assistant',
                             content: text,
@@ -5315,7 +5350,7 @@ HTML_TEMPLATE = """
 
     </script>
     
-    <!-- Footer LexFin avec drapeau animé -->
+    <!-- Footer SRMT-DOCUMIND avec drapeau animé -->
     <div class="srmt-footer" style="position: fixed; bottom: 20px; right: 25px; 
                 color: white; font-size: 13px; font-weight: 600;
                 background: linear-gradient(135deg, var(--senegal-green) 0%, #006838 100%);
@@ -5371,7 +5406,7 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
-lexfin_client = LexFinClient()
+srmt_client = SrmtDocumindClient()
 
 @app.route('/')
 def home():
@@ -5391,21 +5426,10 @@ def chat():
                 'references': []
             }), 400
         
-        result = lexfin_client.chat(message)
-        
-        # 🔧 DEBUG: Log des références pour diagnostiquer le problème "undefined"
-        references = result.get('references', [])
-        logger.info(f"🔍 DEBUG RÉFÉRENCES - Nombre: {len(references)}")
-        for i, ref in enumerate(references[:3]):  # Log des 3 premières
-            logger.info(f"  Ref {i+1}:")
-            logger.info(f"    file_name: '{ref.get('file_name', 'MISSING')}'")
-            logger.info(f"    page_info: '{ref.get('page_info', 'MISSING')}'")
-            logger.info(f"    location: '{ref.get('location', 'MISSING')}'")
-            logger.info(f"    snippet: '{ref.get('snippet', 'MISSING')[:50]}...'")
-        
+        result = srmt_client.chat(message)
         return jsonify({
             'response': result.get('response', ''),
-            'references': references
+            'references': result.get('references', [])
         })
         
     except Exception as e:
@@ -5426,7 +5450,7 @@ def open_file():
         if not file_path:
             return jsonify({'error': 'Chemin de fichier manquant'}), 400
         
-        success = lexfin_client.open_file_at_location(file_path, line_number)
+        success = srmt_client.open_file_at_location(file_path, line_number)
         
         if success:
             return jsonify({
@@ -5449,7 +5473,7 @@ def health_check():
     try:
         # Test rapide de connexion Ollama
         test_response = requests.get(
-            f"{lexfin_client.config.OLLAMA_BASE_URL}/api/tags",
+            f"{srmt_client.config.OLLAMA_BASE_URL}/api/tags",
             timeout=5
         )
         ollama_status = "🟢 Connecté" if test_response.status_code == 200 else "🟡 Réponse inattendue"
@@ -5458,7 +5482,7 @@ def health_check():
     
     return jsonify({
         'ollama_status': ollama_status,
-        'server_url': lexfin_client.config.OLLAMA_BASE_URL,
+        'server_url': srmt_client.config.OLLAMA_BASE_URL,
         'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
     })
 
@@ -5469,8 +5493,8 @@ def get_status():
         # Vérifier le statut de la surveillance
         surveillance_status = "Inactive"
         auto_indexing = False
-        if lexfin_client.observer:
-            if lexfin_client.observer.is_alive():
+        if srmt_client.observer:
+            if srmt_client.observer.is_alive():
                 surveillance_status = "🔄 Active (Auto-indexation ON)"
                 auto_indexing = True
             else:
@@ -5478,16 +5502,16 @@ def get_status():
         
         # Lister les fichiers récents non indexés
         recent_files = []
-        for file_path in lexfin_client.watch_dir.rglob('*'):
-            if file_path.is_file() and lexfin_client.is_supported_file(str(file_path)):
-                if not lexfin_client.is_file_already_indexed(str(file_path)):
+        for file_path in srmt_client.watch_dir.rglob('*'):
+            if file_path.is_file() and srmt_client.is_supported_file(str(file_path)):
+                if not srmt_client.is_file_already_indexed(str(file_path)):
                     recent_files.append(str(file_path))
         
         status = {
-            'indexed_files_count': len(lexfin_client.indexed_files),
-            'watch_directory': str(lexfin_client.watch_dir.absolute()),
-            'supported_extensions': lexfin_client.config.SUPPORTED_EXTENSIONS,
-            'indexed_files': [Path(f).name for f in lexfin_client.indexed_files.keys()],
+            'indexed_files_count': len(srmt_client.indexed_files),
+            'watch_directory': str(srmt_client.watch_dir.absolute()),
+            'supported_extensions': srmt_client.config.SUPPORTED_EXTENSIONS,
+            'indexed_files': [Path(f).name for f in srmt_client.indexed_files.keys()],
             'non_indexed_files': [Path(f).name for f in recent_files],
             'surveillance_status': surveillance_status,
             'auto_indexing': auto_indexing
@@ -5504,13 +5528,13 @@ def restart_watcher():
         logger.info("🔄 Redémarrage manuel de la surveillance automatique...")
         
         # Redémarrer la surveillance
-        success = lexfin_client.start_file_watcher()
+        success = srmt_client.start_file_watcher()
         
         if success:
             return jsonify({
                 'message': 'Surveillance automatique redémarrée avec succès',
                 'status': 'active',
-                'watch_directory': str(lexfin_client.watch_dir)
+                'watch_directory': str(srmt_client.watch_dir)
             })
         else:
             return jsonify({
@@ -5530,16 +5554,16 @@ def force_check_new():
         logger.info("🔍 Vérification manuelle des nouveaux fichiers...")
         
         new_files_indexed = 0
-        for file_path in lexfin_client.watch_dir.rglob('*'):
-            if file_path.is_file() and lexfin_client.is_supported_file(str(file_path)):
-                if not lexfin_client.is_file_already_indexed(str(file_path)):
+        for file_path in srmt_client.watch_dir.rglob('*'):
+            if file_path.is_file() and srmt_client.is_supported_file(str(file_path)):
+                if not srmt_client.is_file_already_indexed(str(file_path)):
                     logger.info(f"🆕 Indexation nouveau fichier: {file_path.name}")
-                    lexfin_client.index_file(str(file_path))
+                    srmt_client.index_file(str(file_path))
                     new_files_indexed += 1
         
         return jsonify({
             'message': f'{new_files_indexed} nouveaux fichiers indexés',
-            'total_indexed': len(lexfin_client.indexed_files)
+            'total_indexed': len(srmt_client.indexed_files)
         })
         
     except Exception as e:
@@ -5555,25 +5579,25 @@ def force_full_reindex():
         
         # Lister tous les fichiers supportés
         supported_files = []
-        for file_path in lexfin_client.watch_dir.rglob('*'):
-            if file_path.is_file() and lexfin_client.is_supported_file(str(file_path)):
+        for file_path in srmt_client.watch_dir.rglob('*'):
+            if file_path.is_file() and srmt_client.is_supported_file(str(file_path)):
                 supported_files.append(str(file_path))
         
         # VIDER COMPLÈTEMENT le cache et ChromaDB
-        lexfin_client.indexed_files.clear()
+        srmt_client.indexed_files.clear()
         try:
-            if hasattr(lexfin_client, 'collection') and lexfin_client.collection:
-                lexfin_client.create_vector_store()
+            if hasattr(srmt_client, 'collection') and srmt_client.collection:
+                srmt_client.create_vector_store()
                 logger.info("🗑️ Base vectorielle et cache complètement vidés")
         except Exception as e:
             logger.warning(f"  Erreur vidage: {e}")
         
         # Indexation complète
-        lexfin_client.scan_existing_files()
+        srmt_client.scan_existing_files()
         
         return jsonify({
             'message': f'Réindexation COMPLÈTE terminée: {len(supported_files)} fichiers retraités',
-            'indexed_count': len(lexfin_client.indexed_files),
+            'indexed_count': len(srmt_client.indexed_files),
             'files_found': len(supported_files),
             'cache_cleared': True
         })
@@ -5586,12 +5610,12 @@ def smart_reindex():
     """Réindexation intelligente (respecte le cache des fichiers déjà indexés)"""
     try:
         # Diagnostic avant indexation
-        logger.info(f"🔍 Scan du dossier: {lexfin_client.config.WATCH_DIRECTORY}")
+        logger.info(f"🔍 Scan du dossier: {srmt_client.config.WATCH_DIRECTORY}")
         
         # Lister tous les fichiers supportés
         supported_files = []
-        for file_path in lexfin_client.watch_dir.rglob('*'):
-            if file_path.is_file() and lexfin_client.is_supported_file(str(file_path)):
+        for file_path in srmt_client.watch_dir.rglob('*'):
+            if file_path.is_file() and srmt_client.is_supported_file(str(file_path)):
                 supported_files.append(str(file_path))
         
         logger.info(f"   {len(supported_files)} fichiers supportés trouvés:")
@@ -5600,37 +5624,37 @@ def smart_reindex():
         
         # Vider le cache ChromaDB complètement
         try:
-            if hasattr(lexfin_client, 'collection') and lexfin_client.collection:
-                lexfin_client.create_vector_store()
+            if hasattr(srmt_client, 'collection') and srmt_client.collection:
+                srmt_client.create_vector_store()
                 logger.info("🗑️ Base vectorielle vidée complètement")
             else:
                 logger.info("🔄 Création nouvelle base vectorielle")
-                lexfin_client.create_vector_store()
+                srmt_client.create_vector_store()
         except Exception as e:
             logger.warning(f"  Erreur vidage base: {e}")
             # Fallback : créer une nouvelle collection
             try:
-                lexfin_client.create_vector_store()
+                srmt_client.create_vector_store()
             except Exception as e2:
                 logger.error(f"  Erreur création base: {e2}")
         
         # NE PAS vider le cache local - garder la mémoire des fichiers indexés
-        # lexfin_client.indexed_files.clear()  # COMMENTÉ pour éviter réindexation
+        # srmt_client.indexed_files.clear()  # COMMENTÉ pour éviter réindexation
         
         # Relancer le scan avec respect du cache
         try:
-            lexfin_client.scan_existing_files()
-            already_indexed = len([f for f in supported_files if lexfin_client.is_file_already_indexed(f)])
-            newly_indexed = len(lexfin_client.indexed_files) - already_indexed
+            srmt_client.scan_existing_files()
+            already_indexed = len([f for f in supported_files if srmt_client.is_file_already_indexed(f)])
+            newly_indexed = len(srmt_client.indexed_files) - already_indexed
             message = f'Scan terminé: {already_indexed} déjà indexés, {newly_indexed} nouveaux fichiers traités'
-            logger.info(f"✅ Indexation terminée: {len(lexfin_client.indexed_files)} fichiers au total")
+            logger.info(f"✅ Indexation terminée: {len(srmt_client.indexed_files)} fichiers au total")
         except Exception as e:
             logger.error(f"Erreur lors de l'indexation: {e}")
             message = f'Réindexation échouée: Vérifiez la connexion Ollama'
         
         return jsonify({
             'message': message,
-            'indexed_count': len(lexfin_client.indexed_files),
+            'indexed_count': len(srmt_client.indexed_files),
             'files_found': len(supported_files),
             'files_list': [Path(f).name for f in supported_files[:5]]  # Top 5 files
         })
@@ -5642,10 +5666,10 @@ def smart_reindex():
 def start_indexing():
     """Démarre l'indexation initiale"""
     try:
-        lexfin_client.scan_existing_files()
+        srmt_client.scan_existing_files()
         return jsonify({
             'message': 'Indexation démarrée',
-            'indexed_count': len(lexfin_client.indexed_files)
+            'indexed_count': len(srmt_client.indexed_files)
         })
     except Exception as e:
         logger.error(f"Erreur start_indexing: {e}")
@@ -5658,17 +5682,17 @@ def diagnostic_files():
         # Lister tous les fichiers du dossier
         all_files = []
         supported_files = []
-        indexed_files = list(lexfin_client.indexed_files.keys())
+        indexed_files = list(srmt_client.indexed_files.keys())
         
-        for file_path in lexfin_client.watch_dir.rglob('*'):
+        for file_path in srmt_client.watch_dir.rglob('*'):
             if file_path.is_file():
                 all_files.append(str(file_path))
-                if lexfin_client.is_supported_file(str(file_path)):
+                if srmt_client.is_supported_file(str(file_path)):
                     supported_files.append(str(file_path))
         
         # Compter les éléments dans ChromaDB avec diagnostic
         try:
-            collection_count = lexfin_client.vector_store.count()
+            collection_count = srmt_client.vector_store.count()
             logger.info(f"📊 ChromaDB count: {collection_count}")
         except Exception as e:
             logger.error(f"  Erreur ChromaDB count: {e}")
@@ -5677,7 +5701,7 @@ def diagnostic_files():
         # Vérifier la collection elle-même
         try:
             # Essayer de récupérer quelques documents pour tester
-            test_results = lexfin_client.vector_store.peek(limit=5)
+            test_results = srmt_client.vector_store.peek(limit=5)
             actual_chunks = len(test_results.get('documents', []))
             logger.info(f"🔍 Documents réels dans ChromaDB: {actual_chunks}")
             if actual_chunks > collection_count:
@@ -5686,7 +5710,7 @@ def diagnostic_files():
             logger.warning(f"  Erreur peek ChromaDB: {e}")
         
         return jsonify({
-            'dossier_surveille': lexfin_client.config.WATCH_DIRECTORY,
+            'dossier_surveille': srmt_client.config.WATCH_DIRECTORY,
             'fichiers_totaux': len(all_files),
             'fichiers_supportes': len(supported_files),
             'fichiers_indexes': len(indexed_files),
@@ -5712,11 +5736,11 @@ def debug_context():
             return jsonify({'error': 'Query manquante'}), 400
         
         # Recherche avec debug
-        context = lexfin_client.search_context(query, limit=3)
+        context = srmt_client.search_context(query, limit=3)
         
         # Récupérer aussi quelques documents de ChromaDB
         try:
-            sample_docs = lexfin_client.collection.peek(limit=3)
+            sample_docs = srmt_client.collection.peek(limit=3)
             sample_content = sample_docs.get('documents', [])[:3] if sample_docs else []
         except:
             sample_content = []
@@ -5726,7 +5750,7 @@ def debug_context():
             'context_found': context,
             'context_length': len(context) if context else 0,
             'sample_documents': sample_content,
-            'collection_count': lexfin_client.collection.count() if lexfin_client.collection else 0
+            'collection_count': srmt_client.collection.count() if srmt_client.collection else 0
         })
         
     except Exception as e:
@@ -5736,20 +5760,20 @@ def debug_context():
 def cleanup():
     """Nettoyage à la fermeture"""
     try:
-        if hasattr(lexfin_client, 'observer') and lexfin_client.observer:
-            lexfin_client.observer.stop()
-            lexfin_client.observer.join()
+        if hasattr(srmt_client, 'observer') and srmt_client.observer:
+            srmt_client.observer.stop()
+            srmt_client.observer.join()
             logger.info("🛑 Surveillance arrêtée proprement")
     except Exception as e:
         logger.error(f"Erreur lors de l'arrêt: {e}")
 
-def app_lexfin():
-    """Lance l'application LexFin"""
-    print("🇸🇳 Démarrage de LexFin - Assistant Fiscal & Douanier Sénégal...")
+def app_srmt_documind():
+    """Lance l'application SRMT-DOCUMIND"""
+    print("🇸🇳 Démarrage de SRMT-DOCUMIND - Assistant Fiscal & Douanier Sénégal...")
     print("=" * 70)
-    print(f"🔗 URL Ollama: {LexFinConfig.OLLAMA_BASE_URL}")
-    print(f"🤖 Modèle IA: {LexFinConfig.OLLAMA_CHAT_MODEL}")
-    print(f"📁 Répertoire surveillé: {LexFinConfig.WATCH_DIRECTORY}")
+    print(f"🔗 URL Ollama: {SrmtDocumindConfig.OLLAMA_BASE_URL}")
+    print(f"🤖 Modèle IA: {SrmtDocumindConfig.OLLAMA_CHAT_MODEL}")
+    print(f"📁 Répertoire surveillé: {SrmtDocumindConfig.WATCH_DIRECTORY}")
     print("🏛️ Spécialisation: Code des Impôts & Code des Douanes Sénégal")
     print("🌐 Démarrage de l'interface web...")
     
@@ -5760,7 +5784,7 @@ def app_lexfin():
             debug=False
         )
     except KeyboardInterrupt:
-        print("\n👋 Arrêt de LexFin...")
+        print("\n👋 Arrêt de SRMT-DOCUMIND...")
         cleanup()
     except Exception as e:
         print(f"❌ Erreur: {e}")
@@ -5769,4 +5793,4 @@ def app_lexfin():
 if __name__ == "__main__":
     import atexit
     atexit.register(cleanup)
-    app_lexfin()
+    app_srmt_documind()

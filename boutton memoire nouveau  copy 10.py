@@ -2562,13 +2562,22 @@ Je ne peux pas répondre à votre question car elle n'est pas liée au domaine f
                     else:
                         code_source = "Documents juridiques sénégalais"
                     
-                    prompt = f"""TEXTE OFFICIEL: {context}
+                    prompt = f"""ARTICLE TROUVE: {context}
 
 QUESTION: {message}
 
-RÈGLE: Utilise UNIQUEMENT les informations exactes du texte officiel. Ne change aucun chiffre ou pourcentage.
+Format de reponse obligatoire:
+**ANALYSE FISCALE - ARTICLE XXX**
 
-Réponds brièvement en expliquant ce que dit le texte."""
+**Champ d'application :** Cette disposition concerne...
+
+**Conditions d'assujettissement :** L'application de cette mesure...
+
+**Mecanisme d'imposition :** Le dispositif fiscal fonctionne...
+
+**Implications pratiques :** Pour les contribuables...
+
+**Reference :** {code_source}, Article XXX"""
                 else:
                     return {
                         "response": f"""⚠️ INFORMATION NON TROUVÉE
@@ -5562,7 +5571,7 @@ def force_full_reindex():
         # VIDER COMPLÈTEMENT le cache et ChromaDB
         lexfin_client.indexed_files.clear()
         try:
-            if hasattr(lexfin_client, 'collection') and lexfin_client.collection:
+            if hasattr(srmt_client, 'collection') and lexfin_client.collection:
                 lexfin_client.create_vector_store()
                 logger.info("🗑️ Base vectorielle et cache complètement vidés")
         except Exception as e:
@@ -5600,7 +5609,7 @@ def smart_reindex():
         
         # Vider le cache ChromaDB complètement
         try:
-            if hasattr(lexfin_client, 'collection') and lexfin_client.collection:
+            if hasattr(srmt_client, 'collection') and lexfin_client.collection:
                 lexfin_client.create_vector_store()
                 logger.info("🗑️ Base vectorielle vidée complètement")
             else:
@@ -5736,7 +5745,7 @@ def debug_context():
 def cleanup():
     """Nettoyage à la fermeture"""
     try:
-        if hasattr(lexfin_client, 'observer') and lexfin_client.observer:
+        if hasattr(srmt_client, 'observer') and lexfin_client.observer:
             lexfin_client.observer.stop()
             lexfin_client.observer.join()
             logger.info("🛑 Surveillance arrêtée proprement")
