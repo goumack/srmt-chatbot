@@ -5566,17 +5566,12 @@ def open_file():
         # Si on a des informations de page, les inclure
         page_fragment = ""
         if page_info and 'page' in page_info.lower():
-            # Extraire le numéro de page de page_info (ex: "page 128" -> 128 ou "pages 194-195" -> 194)
+            # Extraire le numéro de page de page_info (ex: "page 128" -> 128)
             import re
-            page_match = re.search(r'pages?\s+(\d+)', page_info.lower())
+            page_match = re.search(r'page\s+(\d+)', page_info.lower())
             if page_match:
                 page_num = page_match.group(1)
                 page_fragment = f"#page={page_num}"
-                logger.info(f"🔧 DEBUG open_file - page_info: '{page_info}' -> page_num: {page_num}")
-            else:
-                logger.info(f"🔧 DEBUG open_file - Aucun numéro de page trouvé dans: '{page_info}'")
-        else:
-            logger.info(f"🔧 DEBUG open_file - page_info vide ou invalide: '{page_info}'")
         
         return jsonify({
             'message': f'Ouverture de {filename}',

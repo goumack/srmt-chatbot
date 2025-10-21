@@ -474,34 +474,22 @@ class LexFinClient:
             
             elif file_ext == '.pdf':
                 try:
-                    # Extraction PDF avec PyPDF2 ou pdfplumber - conservation des numéros de page réels
+                    # Extraction PDF avec PyPDF2 ou pdfplumber
                     try:
                         import PyPDF2
                         with open(file_path, 'rb') as pdf_file:
                             pdf_reader = PyPDF2.PdfReader(pdf_file)
-                            # Extraction page par page pour conserver les vrais numéros
                             text_content = []
-                            page_info = []  # Stocker les infos de page
-                            
-                            for page_num, page in enumerate(pdf_reader.pages, 1):
-                                page_text = page.extract_text()
-                                if page_text.strip():  # Seulement si la page a du contenu
-                                    # Marquer le début de chaque page
-                                    page_marker = f"\n--- PAGE {page_num} ---\n"
-                                    text_content.append(page_marker + page_text)
-                                    page_info.append((len('\n'.join(text_content[:len(text_content)])), page_num))
-                            
+                            for page in pdf_reader.pages:
+                                text_content.append(page.extract_text())
                             return '\n'.join(text_content)
                     except ImportError:
                         try:
                             import pdfplumber
                             with pdfplumber.open(file_path) as pdf:
                                 text_content = []
-                                for page_num, page in enumerate(pdf.pages, 1):
-                                    page_text = page.extract_text() or ''
-                                    if page_text.strip():
-                                        page_marker = f"\n--- PAGE {page_num} ---\n"
-                                        text_content.append(page_marker + page_text)
+                                for page in pdf.pages:
+                                    text_content.append(page.extract_text() or '')
                                 return '\n'.join(text_content)
                         except ImportError:
                             logger.warning(f"📄 PyPDF2 et pdfplumber non installés pour: {file_path}")
@@ -801,29 +789,9 @@ class LexFinClient:
                 line_start = text_before.count('\n') + 1
                 line_end = line_start + text_chunk.count('\n')
                 
-                # Extraction du vrai numéro de page depuis les marqueurs
-                page_start = 1
-                page_end = 1
-                
-                # Chercher les marqueurs de page dans le chunk et avant
-                import re
-                page_markers_before = re.findall(r'--- PAGE (\d+) ---', text_before)
-                page_markers_in_chunk = re.findall(r'--- PAGE (\d+) ---', chunk_text)
-                
-                if page_markers_before:
-                    page_start = int(page_markers_before[-1])  # Dernière page avant le chunk
-                elif page_markers_in_chunk:
-                    page_start = int(page_markers_in_chunk[0])  # Première page dans le chunk
-                
-                if page_markers_in_chunk:
-                    page_end = int(page_markers_in_chunk[-1])  # Dernière page dans le chunk
-                else:
-                    page_end = page_start
-                
-                # Fallback: si pas de marqueurs trouvés, estimation basique
-                if page_start == 1 and page_end == 1 and line_start > 50:
-                    page_start = max(1, (line_start - 1) // 50 + 1)
-                    page_end = max(1, (line_end - 1) // 50 + 1)
+                # Estimation de page (environ 50 lignes par page)
+                page_start = max(1, (line_start - 1) // 50 + 1)
+                page_end = max(1, (line_end - 1) // 50 + 1)
                 
                 chunks.append({
                     'text': chunk_text,
@@ -927,31 +895,8 @@ class LexFinClient:
                     line_start = start_i + 1
                     line_end = i
                     
-                    # Extraction du vrai numéro de page depuis les marqueurs
-                    page_start = 1
-                    page_end = 1
-                    
-                    # Chercher les marqueurs de page dans le chunk et avant
-                    import re
-                    text_before = '\n'.join(lines[:start_i])
-                    
-                    page_markers_before = re.findall(r'--- PAGE (\d+) ---', text_before)
-                    page_markers_in_chunk = re.findall(r'--- PAGE (\d+) ---', chunk_text)
-                    
-                    if page_markers_before:
-                        page_start = int(page_markers_before[-1])
-                    elif page_markers_in_chunk:
-                        page_start = int(page_markers_in_chunk[0])
-                    
-                    if page_markers_in_chunk:
-                        page_end = int(page_markers_in_chunk[-1])
-                    else:
-                        page_end = page_start
-                    
-                    # Fallback: si pas de marqueurs trouvés, estimation basique
-                    if page_start == 1 and page_end == 1 and line_start > 50:
-                        page_start = max(1, (line_start - 1) // 50 + 1)
-                        page_end = max(1, (line_end - 1) // 50 + 1)
+                    page_start = max(1, (line_start - 1) // 50 + 1)
+                    page_end = max(1, (line_end - 1) // 50 + 1)
                     
                     # Créer la référence hiérarchique complète
                     ref_parts = []
@@ -5566,17 +5511,12 @@ def open_file():
         # Si on a des informations de page, les inclure
         page_fragment = ""
         if page_info and 'page' in page_info.lower():
-            # Extraire le numéro de page de page_info (ex: "page 128" -> 128 ou "pages 194-195" -> 194)
+            # Extraire le numéro de page de page_info (ex: "page 128" -> 128)
             import re
-            page_match = re.search(r'pages?\s+(\d+)', page_info.lower())
+            page_match = re.search(r'page\s+(\d+)', page_info.lower())
             if page_match:
                 page_num = page_match.group(1)
                 page_fragment = f"#page={page_num}"
-                logger.info(f"🔧 DEBUG open_file - page_info: '{page_info}' -> page_num: {page_num}")
-            else:
-                logger.info(f"🔧 DEBUG open_file - Aucun numéro de page trouvé dans: '{page_info}'")
-        else:
-            logger.info(f"🔧 DEBUG open_file - page_info vide ou invalide: '{page_info}'")
         
         return jsonify({
             'message': f'Ouverture de {filename}',
