@@ -1,0 +1,226 @@
+{
+  "parle moi des marchandises a la douanes...": {
+    "id": "parle moi des marchandises a la douanes...",
+    "created_at": 1761137945.8733149,
+    "last_updated": 1761137956.7413075,
+    "history": [
+      {
+        "role": "user",
+        "content": "parle moi des marchandises a la douanes",
+        "timestamp": 1761137945.9042509,
+        "references": []
+      },
+      {
+        "role": "assistant",
+        "content": " Les marchandises qui arrivent aux douanes doivent être présentées par leur propriétaire (Article 97). Lorsqu'elles sont présentes à l’administration des Douane, ces dernières peuvent subir un examen ou de prélèvements d‘échantillons avec son autorisation ( Article 98 ). En attendant leurs remise ou leur vente dans le cadre du service public aux enchérisseurs les plus offrants et dernier à s’y engager, ces marchandises sont placées sous la surveillance des douanes. Les produits ne peuvent circuler sans un passavant (Article 271).",
+        "timestamp": 1761137956.7413075,
+        "references": []
+      }
+    ],
+    "context_keywords": [
+      "douane",
+      "marchandise"
+    ],
+    "current_topics": []
+  },
+  "parle moi des marchandises a la douanes": {
+    "id": "parle moi des marchandises a la douanes",
+    "created_at": 1761138249.4535463,
+    "last_updated": 1761138260.0161824,
+    "history": [
+      {
+        "role": "user",
+        "content": "parle moi des marchandises a la douanes",
+        "timestamp": 1761138249.779062,
+        "references": []
+      },
+      {
+        "role": "assistant",
+        "content": " Les marchandises qui arrivent aux douanes doivent être présentées par leur propriétaire (Article 97). Lorsqu'elles sont présentes à l’administration des Douane, ces dernières peuvent subir un examen ou de prélèvements d‘échantillons avec son autorisation ( Article 98 ). En attendant leurs remise ou leur vente dans le cadre du service public aux enchérisseurs les plus offrants et dernier à s’y engager, ces marchandises sont placées sous la surveillance des douanes. Les produits ne peuvent circuler sans un passavant (Article 271).",
+        "timestamp": 1761138260.0161824,
+        "references": []
+      }
+    ],
+    "context_keywords": [
+      "douane",
+      "marchandise"
+    ],
+    "current_topics": [],
+    "initial_title": null
+  },
+  "1761142335": {
+    "id": "1761142335",
+    "created_at": 1761142335.5134456,
+    "last_updated": 1761142349.968679,
+    "history": [
+      {
+        "role": "user",
+        "content": "parle moi du taux de la tva",
+        "timestamp": 1761142335.54741,
+        "references": []
+      },
+      {
+        "role": "assistant",
+        "content": " Le taux actuellement fixe pour le calcul du montant d'imposition sur la Valeur Ajoutée (TVA) au Sénégal est défini à 18% selon l’article 369 des extraits de Code Des Impôts et Fiscalité que vous avez fournis. Cependant, il existe une exception pour les établissements d'hébergement touristique agrées dont le taux est réduit à un montant inférieur : 10%.\nCes informations sont issues de l’article suivants du Code Des Impôts et Fiscalité que vous avez fournis: Article 369.",
+        "timestamp": 1761142349.968679,
+        "references": []
+      }
+    ],
+    "context_keywords": [
+      "tva"
+    ],
+    "current_topics": [],
+    "initial_title": "parle moi du taux de la tva"
+  },
+  "1761142780": {
+    "id": "1761142780",
+    "created_at": 1761142780.6106315,
+    "last_updated": 1761142851.5626361,
+    "history": [
+      {
+        "role": "user",
+        "content": "• \"Que dit l'article 45 du code général des impôts ?\"",
+        "timestamp": 1761142780.6360373,
+        "references": []
+      },
+      {
+        "role": "assistant",
+        "content": " L'article 45 du code général des impôts stipule que \"les personnes imposables doivent joindre à leur déclaration de résultat et au bilan un état spécial, établi sur papier libre, des provisions techniques faisant ressortir les excédents et la taxe due conformément aux dispositions des articles 42 et 43.\"",
+        "timestamp": 1761142789.7806253,
+        "references": []
+      },
+      {
+        "role": "user",
+        "content": "je ne comprend pas explique",
+        "timestamp": 1761142823.1008818,
+        "references": []
+      },
+      {
+        "role": "assistant",
+        "content": " L'article 45 du Code général des impôts stipule que \"les personnes imposables doivent joindre à leur déclaration de résultat et au bilan un état spécial, établi sur papier libre, [des provisions techniques faisant], le cas échéant, ressortir les excédents et la taxe due conformément aux dispositions des articles 42 et 43.\"\nCependant ce texte ne précise pas explicitement quels sont ces \"provisions technique\" ou comment calculer l'excède. Il est donc nécessaire de consulter d’autres documents pour avoir plus clair sur cette question, notamment les dispositions des articles mentionnés (42 et 43).\nBien que la procédure spécifique ne soit pas détaillée dans ces extraits trouvées, le Code général des impôts traite de :\n- Article premier: La présente loi porte code général des impots... (page 1) qui régit les imposables direct et indirect ainsi que leurs règles afférentes aux procédures fiscal. Il est donc possible qu'il y ait d’autres dispositions dans ce document concernant ces \"provisions techniques\".\n- LIVRE PR EMIER : IMPO TS DIRECT S ET  TAXES ASSIMILEE (page3) qui traite des impôts sur les revenus, il est donc possible qu'il y ait d’autres dispositions dans ce document concernant ces \"provisions techniques\".\n- CHAPITRE PREMIER : IMPÔT SUR LES BENEFICES DES SOCIETES ET AUTRES PERSONNES MORAL (page 3) qui traite des impôts sur les bénéfices de sociétés et autres personnes morales, il est donc possible qu'il y ait d’autres dispositions dans ce document concernant ces \"provisions techniques\".\nCes documents encadrent l'aspect connexe du domaine général des impôts.",
+        "timestamp": 1761142851.5626361,
+        "references": []
+      }
+    ],
+    "context_keywords": [
+      "impôt",
+      "article",
+      "code",
+      "article_45"
+    ],
+    "current_topics": [],
+    "initial_title": "• \"Que dit l'article 45 du code général des impôts ?\""
+  },
+  "1761143192": {
+    "id": "1761143192",
+    "created_at": 1761143192.85274,
+    "last_updated": 1761143253.1961935,
+    "history": [
+      {
+        "role": "user",
+        "content": "parle moi de fraude et les sacnction",
+        "timestamp": 1761143192.8829079,
+        "references": []
+      },
+      {
+        "role": "assistant",
+        "content": " Les textes ci-dessus sont extraits respectivement :\n* Du Code Senegalais sur les douanes en Article 375, page 104 (lignes 5636 à 5641) concernant la responsabilité des complices de délit d'évasion fiscale et adhérents aux fraudes qui encourent les mêmes peines que leurs auteurs directs.\n* Du Code Senegalais sur l’impôt en Article 687, page 339 (lignes 12481 à 12486) concernant la punition des complices et de toute personne ayant un intérêt dans une fraude fiscale.\n* Du Code Senegalais sur l’impôt en Article 681, page 337 (lignes 12411 à 12415) concernant les sanctions pour manquement aux engagements et obligations prescrits par le Livre II du présent Code.\n* Du même code des douanes en Article 393, pages 109-110 (lignes 5946 à 5955) concernant la fraude faite ou tentée hors unités de dédouanement et non spécifiquement réprimées par une autre disposition du présent code.\n* Du même Code des douanes en Article 407, page 113 (lignes 6133 à 6138) concernant la confiscation dans les cas d'infractions visés aux articles  397 alinéa  2 et 400 alinéa  1 du présent code.\nCe dernier article précise que, pour ces infraction spécifiques mentionnées (articles 397 à l’alinée 2 et articelel 400 au premier alignement), la confiscation ne peut être prononcées qu'à l‘égard des objets de fraude.",
+        "timestamp": 1761143253.1961935,
+        "references": []
+      }
+    ],
+    "context_keywords": [],
+    "current_topics": [],
+    "initial_title": "parle moi de fraude et les sacnction"
+  },
+  "1761143324": {
+    "id": "1761143324",
+    "created_at": 1761143324.9868817,
+    "last_updated": 1761143355.4749804,
+    "history": [
+      {
+        "role": "user",
+        "content": "parle moi de fraude",
+        "timestamp": 1761143324.9988813,
+        "references": []
+      },
+      {
+        "role": "assistant",
+        "content": " La fraude douanière est punie selon le Code des Douanes sénégalais. Selon l'article 375 du code (page 104), \"Les dispositions [des articles]  45 et 46\" du code pénal sont applicables aux complices de délits douaniers, qui encourent les mêmes peines que leurs auteurs directs.\nL'article 382 (page 105) précise qu'\"Les propriétaires des marchandises [de fraude], ceux qui se sont chargés d’en importer ou exporter, ainsi que tous intéressés à la frauduleuse évasion de droits douaniers et adhérants aux méthodes utilisées pour commettre cette infraction\" peuvent être poursuivis.\nEn outre, selon l'article 410 (page 113), \"Lorsque le tribunal a acquis la conviction que les offres ou propositions d’achat portant sur des objets de fraude ont été faites\" par quelqu'un qui nourrit une intention frauduleuse, cette personne peut être poursuivie.\nEnfin, selon l'article 353 (page 99), les \"objets saisis ou confiscés ne peuvent [être] revendiqué[s par leurs propriétaires], ni le prix qu’il soit consignée\" pour eux-mêmes.\nCes dispositions encadrent l'aspect général de la fraude douanière en Sénégal, mais il n'est pas spécifié dans ces extraits comment est définie précisément cette infraction ou quelles sont les peines encourues pour commettre une telle frauduleuse évasion des droits dus à l’État.",
+        "timestamp": 1761143355.4749804,
+        "references": []
+      }
+    ],
+    "context_keywords": [],
+    "current_topics": [],
+    "initial_title": "parle moi de fraude"
+  },
+  "1761143585": {
+    "id": "1761143585",
+    "created_at": 1761143585.7054348,
+    "last_updated": 1761143615.656567,
+    "history": [
+      {
+        "role": "user",
+        "content": "parle moi de fraude",
+        "timestamp": 1761143585.736039,
+        "references": []
+      },
+      {
+        "role": "assistant",
+        "content": " La fraude douanière est punie selon le Code des Douanes sénégalais. Selon l'article 375 du code (page 104), \"Les dispositions [des articles]  45 et 46\" du code pénal sont applicables aux complices de délits douaniers, qui encourent les mêmes peines que leurs auteurs directs.\nL'article 382 (page 105) précise qu'\"Les propriétaires des marchandises [de fraude], ceux qui se sont chargés d’en importer ou exporter, ainsi que tous intéressés à la frauduleuse évasion de droits douaniers et adhérants aux méthodes utilisées pour commettre cette infraction\" peuvent être poursuivis.\nEn outre, selon l'article 410 (page 113), \"Lorsque le tribunal a acquis la conviction que les offres ou propositions d’achat portant sur des objets de fraude ont été faites\" par quelqu'un qui nourrit une intention frauduleuse, cette personne peut être poursuivie.\nEnfin, selon l'article 353 (page 99), les \"objets saisis ou confiscés ne peuvent [être] revendiqué[s par leurs propriétaires], ni le prix qu’il soit consignée\" pour eux-mêmes.\nCes dispositions encadrent l'aspect général de la fraude douanière en Sénégal, mais il n'est pas spécifié dans ces extraits comment est définie précisément cette infraction ou quelles sont les peines encourues pour commettre une telle frauduleuse évasion des droits dus à l’État.",
+        "timestamp": 1761143615.656567,
+        "references": []
+      }
+    ],
+    "context_keywords": [],
+    "current_topics": [],
+    "initial_title": "parle moi de fraude"
+  },
+  "1761143666": {
+    "id": "1761143666",
+    "created_at": 1761143666.6073754,
+    "last_updated": 1761143690.1765385,
+    "history": [
+      {
+        "role": "user",
+        "content": "parle moi de la tva",
+        "timestamp": 1761143666.6334815,
+        "references": []
+      },
+      {
+        "role": "assistant",
+        "content": " La TVA (Taxe sur la Valeur Ajoutée) est une taxe établie au profit du budget d'État sénégalais. Elle a un champ d’application large, notamment pour des opérations commerciales telles que :\n- Les livraisons de biens et les prestations de services (Article 364). La TVA est exigible le mois suivant celui du fait généré au plus tard le 15e jour. Pour ces transactions, la base d'imposition comprend des éléments tels que :\n    - Les impôts et autres taxes à l’exception de la TVA elle-même (Article 364).\n    - Des frais accessoires telles les droits ou prélèvements.\nLes exonérations justifiées sont délivrés par le Direction générale des Douanes et doivent être réalisée au cours de l'annnée, à la fin du troisième mois suivant clôture d’exercice (Article 6). Toutefois en cas d ’émission avant les livraisons ou prestations effectives.\n- Les indemnités conventionnées reçues pour des sinistres sont hors de champ application TVA, mais celles constituant la juste réparation du préjudice ne le font pas (Article 352).",
+        "timestamp": 1761143690.1765385,
+        "references": []
+      }
+    ],
+    "context_keywords": [
+      "tva"
+    ],
+    "current_topics": [],
+    "initial_title": "parle moi de la tva"
+  },
+  "1761143768": {
+    "id": "1761143768",
+    "created_at": 1761143768.3412983,
+    "last_updated": 1761143788.3927882,
+    "history": [
+      {
+        "role": "user",
+        "content": "bonjour",
+        "timestamp": 1761143768.3630178,
+        "references": []
+      },
+      {
+        "role": "assistant",
+        "content": "Bonjour ! Je suis LexFin, votre assistant IA spécialisé UNIQUEMENT en fiscalité sénégalaise.\n\n⚠️ MODE RAG STRICT : Je réponds exclusivement sur la base des documents fiscaux indexés.\n\n🔍 Posez-moi vos questions sur :\n• Code Général des Impôts (CGI) du Sénégal\n• Code des Douanes sénégalais\n• Articles et textes fiscaux sénégalais",
+        "timestamp": 1761143788.3927882,
+        "references": []
+      }
+    ],
+    "context_keywords": [],
+    "current_topics": [],
+    "initial_title": "bonjour"
+  }
+}
