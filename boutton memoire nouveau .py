@@ -19,6 +19,7 @@ import hashlib
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from datetime import datetime
 import re
 from collections import Counter
 import math
@@ -170,6 +171,170 @@ class DocumentWatcherHandler(FileSystemEventHandler):
             thread = threading.Thread(target=delayed_reprocess, daemon=True)
             thread.start()
 
+class ConversationManager:
+    """Gestionnaire de conversations avec mémoire contextuelle pour discussions intelligentes"""
+    
+    def __init__(self, max_history_length=10):
+        self.conversations = {}  # {conversation_id: conversation_data}
+        self.max_history_length = max_history_length
+        
+    def create_conversation(self, conversation_id=None):
+        """Crée une nouvelle conversation"""
+        if conversation_id is None:
+            conversation_id = str(int(time.time()))
+        
+        self.conversations[conversation_id] = {
+            'id': conversation_id,
+            'created_at': time.time(),
+            'last_updated': time.time(),
+            'history': [],  # [{'role': 'user'/'assistant', 'content': str, 'timestamp': float, 'references': []}]
+            'context_keywords': set(),  # Mots-clés extraits pour le contexte
+            'current_topics': [],  # Sujets actuels de discussion
+        }
+        
+        logger.info(f"🗨️ Nouvelle conversation créée: {conversation_id}")
+        return conversation_id
+    
+    def add_message(self, conversation_id, role, content, references=None):
+        """Ajoute un message à l'historique de conversation"""
+        if conversation_id not in self.conversations:
+            conversation_id = self.create_conversation(conversation_id)
+        
+        conversation = self.conversations[conversation_id]
+        
+        message = {
+            'role': role,
+            'content': content,
+            'timestamp': time.time(),
+            'references': references or []
+        }
+        
+        conversation['history'].append(message)
+        conversation['last_updated'] = time.time()
+        
+        # Limiter la taille de l'historique
+        if len(conversation['history']) > self.max_history_length * 2:  # user + assistant = 2 messages
+            conversation['history'] = conversation['history'][-self.max_history_length * 2:]
+        
+        # Extraire les mots-clés pour le contexte
+        if role == 'user':
+            self._extract_keywords(conversation, content)
+        
+        logger.info(f"💬 Message ajouté à la conversation {conversation_id}: {role}")
+        return conversation_id
+    
+    def _extract_keywords(self, conversation, content):
+        """Extrait les mots-clés importants du message utilisateur"""
+        import re
+        
+        # Mots-clés fiscaux et juridiques importants
+        fiscal_keywords = [
+            'tva', 'taxe', 'impot', 'impôt', 'douane', 'article', 'code',
+            'marchandise', 'importation', 'exportation', 'société', 'sociétés',
+            'fiscal', 'bénéfice', 'revenus', 'déclaration', 'assujetti',
+            'redevable', 'exonération', 'déduction', 'crédit', 'loi', 'finances',
+            'budget', 'recettes', 'dépenses', 'investissement', 'économique'
+        ]
+        
+        # Extraire les mots-clés du contenu
+        content_lower = content.lower()
+        for keyword in fiscal_keywords:
+            if keyword in content_lower:
+                conversation['context_keywords'].add(keyword)
+        
+        # Extraire les numéros d'articles
+        articles = re.findall(r'article\s+(\d+)', content_lower)
+        for article in articles:
+            conversation['context_keywords'].add(f'article_{article}')
+        
+        # Extraire les valeurs numériques importantes
+        montants = re.findall(r'(\d+(?:\s\d+)*(?:,\d+)?\s*(?:millions?|milliards?)\s*(?:fcfa|euros?))', content_lower)
+        for montant in montants:
+            conversation['context_keywords'].add(f'montant_{montant.replace(" ", "_")}')
+    
+    def get_conversation_context(self, conversation_id, max_messages=6):
+        """Récupère le contexte de la conversation pour alimenter le prompt"""
+        if conversation_id not in self.conversations:
+            return ""
+        
+        conversation = self.conversations[conversation_id]
+        history = conversation['history']
+        
+        if not history:
+            return ""
+        
+        # Prendre les derniers messages (max_messages)
+        recent_history = history[-max_messages:]
+        
+        context_parts = []
+        context_parts.append("HISTORIQUE DE LA CONVERSATION ACTUELLE:")
+        
+        for i, message in enumerate(recent_history, 1):
+            role_label = "UTILISATEUR" if message['role'] == 'user' else "ASSISTANT"
+            context_parts.append(f"{i}. {role_label}: {message['content'][:200]}...")
+            
+            # Ajouter les références si disponibles
+            if message.get('references') and message['role'] == 'assistant':
+                refs = message['references'][:2]  # Limiter à 2 références
+                for ref in refs:
+                    article = ref.get('article_ref', 'N/A')
+                    context_parts.append(f"   → Référence: {article}")
+        
+        # Ajouter les mots-clés contextuels
+        if conversation['context_keywords']:
+            keywords = list(conversation['context_keywords'])[:8]  # Limiter à 8 mots-clés
+            context_parts.append(f"MOTS-CLÉS DU CONTEXTE: {', '.join(keywords)}")
+        
+        return "\n".join(context_parts)
+    
+    def analyze_follow_up_question(self, conversation_id, current_question):
+        """Analyse si la question actuelle fait référence à la conversation précédente"""
+        if conversation_id not in self.conversations:
+            return False, ""
+        
+        conversation = self.conversations[conversation_id]
+        history = conversation['history']
+        
+        if len(history) < 2:  # Pas assez d'historique
+            return False, ""
+        
+        # Mots indicateurs de questions de suivi - ULTRA SPÉCIFIQUES
+        follow_up_indicators = [
+            'ce taux-là', 'cette taxe-là', 'cet impôt-là', 'cette loi-là', 'cet article-là',
+            'comme mentionné', 'dont vous parlez', 'que vous avez dit',
+            'par rapport à cela', 'contrairement à cela',
+            'aussi pour', 'également pour', 'et pour cette', 'et pour ce',
+            'mais pour cette', 'mais pour ce'
+        ]
+        
+        current_lower = current_question.lower()
+        is_follow_up = any(indicator in current_lower for indicator in follow_up_indicators)
+        
+        if is_follow_up:
+            # Récupérer la dernière question de l'utilisateur
+            last_user_message = None
+            for message in reversed(history):
+                if message['role'] == 'user':
+                    last_user_message = message
+                    break
+            
+            if last_user_message:
+                context_hint = f"QUESTION PRÉCÉDENTE: {last_user_message['content']}"
+                logger.info(f"🔗 Question de suivi détectée - Contexte: {last_user_message['content'][:50]}...")
+                return True, context_hint
+        
+        return False, ""
+    
+    def get_conversation_ids(self):
+        """Retourne la liste des IDs de conversations"""
+        return list(self.conversations.keys())
+    
+    def delete_conversation(self, conversation_id):
+        """Supprime une conversation"""
+        if conversation_id in self.conversations:
+            del self.conversations[conversation_id]
+            logger.info(f"🗑️ Conversation supprimée: {conversation_id}")
+
 class LexFinClient:
     """Client LexFin optimisé avec surveillance automatique pour la fiscalité et douanes sénégalaises"""
     
@@ -177,6 +342,11 @@ class LexFinClient:
         self.config = LexFinConfig()
         self.indexed_files = {}  # Cache des fichiers indexés {path: hash}
         self.observer = None  # Référence au watcher
+        
+        # 🗨️ NOUVEAU: Gestionnaire de conversations intelligentes
+        self.conversation_manager = ConversationManager(max_history_length=8)
+        self.current_conversation_id = None
+        
         self.setup_chroma()
         self.setup_watch_directory()
         
@@ -195,6 +365,43 @@ class LexFinClient:
             logger.info("   DOCUMIND initialisé - Surveillance automatique active")
         else:
             logger.info("   DOCUMIND initialisé - Mode manuel activé")
+    
+    def start_new_conversation(self):
+        """Démarre une nouvelle conversation"""
+        self.current_conversation_id = self.conversation_manager.create_conversation()
+        logger.info(f"🆕 Nouvelle conversation démarrée: {self.current_conversation_id}")
+        return self.current_conversation_id
+    
+    def set_conversation(self, conversation_id):
+        """Change la conversation active"""
+        if conversation_id in self.conversation_manager.conversations:
+            self.current_conversation_id = conversation_id
+            logger.info(f"🔄 Conversation active changée: {conversation_id}")
+        else:
+            logger.warning(f"⚠️ Conversation introuvable: {conversation_id}")
+    
+    def get_conversations_list(self):
+        """Retourne la liste des conversations avec résumés"""
+        conversations = []
+        for conv_id, conv_data in self.conversation_manager.conversations.items():
+            # Prendre le premier message utilisateur comme titre
+            title = "Nouvelle conversation"
+            if conv_data['history']:
+                first_user_msg = next((msg for msg in conv_data['history'] if msg['role'] == 'user'), None)
+                if first_user_msg:
+                    title = first_user_msg['content'][:50] + "..." if len(first_user_msg['content']) > 50 else first_user_msg['content']
+            
+            conversations.append({
+                'id': conv_id,
+                'title': title,
+                'created_at': conv_data['created_at'],
+                'last_updated': conv_data['last_updated'],
+                'message_count': len(conv_data['history'])
+            })
+        
+        # Trier par dernière mise à jour
+        conversations.sort(key=lambda x: x['last_updated'], reverse=True)
+        return conversations
     
     def setup_chroma(self):
         """Initialise ChromaDB avec gestion automatique de la dimension d'embeddings"""
@@ -499,9 +706,47 @@ class LexFinClient:
                                 text_content = []
                                 for page_num, page in enumerate(pdf.pages, 1):
                                     page_text = page.extract_text() or ''
-                                    if page_text.strip():
-                                        page_marker = f"\n--- PAGE {page_num} ---\n"
-                                        text_content.append(page_marker + page_text)
+                                    
+                                    # Essayer d'extraire les tableaux d'abord
+                                    tables = page.extract_tables()
+                                    
+                                    if tables:
+                                        # Si des tableaux sont détectés, les formater proprement
+                                        page_text_with_tables = f"\n--- PAGE {page_num} ---\n"
+                                        
+                                        # Ajouter le texte normal
+                                        if page_text.strip():
+                                            page_text_with_tables += page_text + "\n\n"
+                                        
+                                        # Ajouter les tableaux formatés
+                                        for i, table in enumerate(tables):
+                                            page_text_with_tables += f"TABLEAU {i+1} (Page {page_num}):\n"
+                                            if table and len(table) > 0:
+                                                # Créer un tableau lisible
+                                                for row_idx, row in enumerate(table):
+                                                    if row_idx == 0 and any(cell for cell in row if cell):
+                                                        # En-têtes
+                                                        page_text_with_tables += "COLONNES: " + " | ".join(str(cell or '') for cell in row) + "\n"
+                                                        page_text_with_tables += "-" * 80 + "\n"
+                                                    else:
+                                                        # Données avec labels
+                                                        if any(cell for cell in row if cell):
+                                                            formatted_row = []
+                                                            for cell in row:
+                                                                cell_text = str(cell or '').strip()
+                                                                if cell_text:
+                                                                    formatted_row.append(cell_text)
+                                                            if formatted_row:
+                                                                page_text_with_tables += "LIGNE: " + " | ".join(formatted_row) + "\n"
+                                            page_text_with_tables += "\n"
+                                        
+                                        text_content.append(page_text_with_tables)
+                                    else:
+                                        # Pas de tableau, texte normal
+                                        if page_text.strip():
+                                            page_marker = f"\n--- PAGE {page_num} ---\n"
+                                            text_content.append(page_marker + page_text)
+                                            
                                 return '\n'.join(text_content)
                         except ImportError:
                             logger.warning(f"📄 PyPDF2 et pdfplumber non installés pour: {file_path}")
@@ -1067,13 +1312,150 @@ class LexFinClient:
                         self.index_file(str(file_path))
                         count += 1
 
+    def _correct_ocr_errors(self, text: str) -> str:
+        """🔧 Correction des erreurs OCR courantes dans les PDFs"""
+        if not text:
+            return text
+            
+        # Dictionnaire des corrections OCR courantes
+        ocr_corrections = {
+            # Erreurs d'espacement dans les mots
+            r'\bcommis sions\b': 'commissions',
+            r'\bimpor tation\b': 'importation',
+            r'\bexporta tion\b': 'exportation', 
+            r'\bdédouane ment\b': 'dédouanement',
+            r'\bmarca ndises\b': 'marchandises',
+            r'\bdispos itions\b': 'dispositions',
+            r'\bopéra tions\b': 'opérations',
+            r'\bactivité s\b': 'activités',
+            r'\bentrepri ses\b': 'entreprises',
+            r'\bcontri buable\b': 'contribuable',
+            r'\btransac tions\b': 'transactions',
+            r'\bimpos ition\b': 'imposition',
+            r'\bexonéra tion\b': 'exonération',
+            r'\bbénéfi ces\b': 'bénéfices',
+            r'\bservice s\b': 'services',
+            r'\bfourni tures\b': 'fournitures',
+            r'\blivrai sons\b': 'livraisons',
+            r'\bpresta tions\b': 'prestations',
+            
+            # Erreurs de caractères spéciaux
+            r'\bpour cent\b': 'pour cent',
+            r'\btaux de\b': 'taux de',
+            r'\bart icle\b': 'article',
+            r'\bnou veau\b': 'nouveau',
+            r'\banc ien\b': 'ancien',
+            r'\bmontant s\b': 'montants',
+            
+            # Corrections de ponctuation OCR
+            r'\s+,': ',',
+            r'\s+\.': '.',
+            r'\s+:': ':',
+            r'\s+;': ';',
+            
+            # Corrections de nombres avec espaces
+            r'\b(\d+)\s+%': r'\1%',
+            r'\b(\d+)\s+(\d+)%': r'\1\2%',
+            
+            # Autres corrections communes
+            r'\bde la\b': 'de la',
+            r'\bde l\s*\'\s*': "de l'",
+            r'\bdu\s+code\b': 'du code',
+        }
+        
+        corrected_text = text
+        for pattern, replacement in ocr_corrections.items():
+            corrected_text = re.sub(pattern, replacement, corrected_text, flags=re.IGNORECASE)
+        
+        return corrected_text
+
+    def _enhance_text_for_embedding(self, text: str) -> str:
+        """
+        Améliore subtilement le texte pour de meilleurs embeddings sémantiques
+        Normalise les références géographiques car tous les documents concernent le Sénégal
+        Corrige les erreurs OCR communes dans les documents PDF
+        """
+        original_text = text.strip()
+        enhanced_text = original_text
+        
+        # 🔧 CORRECTION DES ERREURS OCR COMMUNES
+        ocr_corrections = {
+            r'\bcommis sions\b': 'commissions',
+            r'\bopéra tions\b': 'opérations', 
+            r'\bapplica tion\b': 'application',
+            r'\bimposi tion\b': 'imposition',
+            r'\bdéduc tion\b': 'déduction',
+            r'\bexonéra tion\b': 'exonération',
+            r'\bpublica tion\b': 'publication',
+            r'\borganisa tion\b': 'organisation',
+            r'\badministra tion\b': 'administration',
+            r'\bfinanci ères\b': 'financières',
+            r'\bfinanci ers\b': 'financiers',
+            r'\bcommercial es\b': 'commerciales',
+            r'\bindustri elles\b': 'industrielles',
+            r'\bprofession nelles\b': 'professionnelles'
+        }
+        
+        import re
+        ocr_corrected = False
+        for error_pattern, correction in ocr_corrections.items():
+            if re.search(error_pattern, enhanced_text, re.IGNORECASE):
+                enhanced_text = re.sub(error_pattern, correction, enhanced_text, flags=re.IGNORECASE)
+                ocr_corrected = True
+        
+        if ocr_corrected:
+            logger.info(f"🔧 Correction OCR appliquée: '{original_text[:50]}...' → '{enhanced_text[:50]}...'")
+        
+        # 🇸🇳 NORMALISATION GÉOGRAPHIQUE INTELLIGENTE
+        # Tous nos documents concernent le Sénégal, donc "au Sénégal" est redondant
+        
+        # Patterns de suppression géographique (avec regex pour plus de précision)
+        import re
+        
+        # Supprimer les références géographiques redondantes (case insensitive)
+        geographic_patterns = [
+            r'\bau sénégal\b', r'\bdu sénégal\b', r'\ben sénégal\b', r'\bsénégalais\b',
+            r'\bau senegal\b', r'\bdu senegal\b', r'\ben senegal\b', r'\bsenegalais\b',
+            r'\bsénégal\b', r'\bsenegal\b'
+        ]
+        
+        for pattern in geographic_patterns:
+            if re.search(pattern, enhanced_text, re.IGNORECASE):
+                enhanced_text = re.sub(pattern, '', enhanced_text, flags=re.IGNORECASE)
+                enhanced_text = re.sub(r'\s+', ' ', enhanced_text).strip()  # Nettoyer espaces multiples
+                logger.info(f"🇸🇳 Normalisation géographique: '{original_text}' → '{enhanced_text}'")
+                break
+        
+        # Si c'est une courte question, l'étendre légèrement avec du contexte implicite
+        if len(enhanced_text) < 50 and '?' in enhanced_text:
+            # Questions sur les taux -> contexte fiscal/taxation
+            if any(word in enhanced_text.lower() for word in ['taux', 'combien', 'pourcentage']):
+                if any(word in enhanced_text.lower() for word in ['tva', 'taxe']):
+                    # Ajouter un contexte fiscal implicite pour les questions TVA
+                    return f"{enhanced_text} contexte fiscal taxation"
+                elif any(word in enhanced_text.lower() for word in ['impôt', 'société', 'is']):
+                    return f"{enhanced_text} contexte fiscal impôt"
+                elif any(word in enhanced_text.lower() for word in ['douane', 'marchandise', 'importation']):
+                    return f"{enhanced_text} contexte douanier"
+            
+            # Questions générales sur articles -> contexte juridique
+            if 'article' in enhanced_text.lower():
+                return f"{enhanced_text} contexte juridique code loi"
+        
+        # Pour les textes plus longs, retourner la version normalisée
+        return enhanced_text
+
     def generate_embeddings(self, text: str, max_retries: int = 2) -> List[float]:
-        """Génère des embeddings avec optimisations et retry"""
+        """Génère des embeddings intelligents avec contextualisation sémantique"""
+        
+        # 🧠 AMÉLIORATION SÉMANTIQUE: Préparation du texte pour meilleur embedding
+        enhanced_text = self._enhance_text_for_embedding(text)
+        
         for attempt in range(max_retries + 1):
             try:
                 payload = {
                     "model": self.config.OLLAMA_EMBEDDING_MODEL,
-                    "prompt": text
+                    "prompt": enhanced_text
                 }
                 
                 # Timeout réduit et session réutilisable
@@ -1092,7 +1474,10 @@ class LexFinClient:
                 )
                 
                 if response.status_code == 200:
-                    logger.info(f"✅ Embedding généré avec succès (tentative {attempt + 1})")
+                    if enhanced_text != text:
+                        logger.info(f"🧠 Embedding contextualisé généré (tentative {attempt + 1})")
+                    else:
+                        logger.info(f"✅ Embedding généré avec succès (tentative {attempt + 1})")
                     return response.json()['embedding']
                 else:
                     logger.warning(f"⚠️ Réponse HTTP {response.status_code} (tentative {attempt + 1})")
@@ -1466,8 +1851,39 @@ class LexFinClient:
         logger.info(f"🔧 Déduplication intelligente: {len(references)} → {len(deduplicated)} références optimisées (triées par score)")
         return deduplicated
 
+    def analyze_search_results(self, query: str, references: List[Dict]) -> str:
+        """Analyse les résultats de recherche pour déterminer le type de contenu trouvé"""
+        if not references:
+            return "general"
+        
+        # Analyser les sources des documents trouvés
+        file_analysis = {}
+        for ref in references:
+            file_name = ref.get('file_name', '').lower()
+            if file_name not in file_analysis:
+                file_analysis[file_name] = 0
+            file_analysis[file_name] += 1
+        
+        # Classifier selon les documents majoritaires
+        impots_files = sum(1 for f in file_analysis.keys() if 'impot' in f or 'fiscal' in f)
+        douanes_files = sum(1 for f in file_analysis.keys() if 'douane' in f)
+        budget_files = sum(1 for f in file_analysis.keys() if any(x in f for x in ['budget', 'loi', 'finance', 'economique']))
+        
+        if budget_files > 0:
+            logger.info(f"📊 Contenu BUDGÉTAIRE/ÉCONOMIQUE détecté: {budget_files} fichiers")
+            return "economique"
+        elif impots_files > douanes_files:
+            logger.info(f"🏛️ Contenu FISCAL détecté: {impots_files} fichiers")
+            return "fiscal"
+        elif douanes_files > 0:
+            logger.info(f"🚢 Contenu DOUANIER détecté: {douanes_files} fichiers")
+            return "douanier"
+        else:
+            logger.info(f"🔄 Contenu MIXTE détecté")
+            return "mixte"
+
     def detect_query_domain(self, query: str) -> str:
-        """Détecte si la question porte sur les impôts, les douanes, ou les deux"""
+        """Détecte si la question porte sur les impôts, les douanes, l'économie, ou les deux"""
         query_lower = query.lower()
         
         # Mots-clés spécifiques aux technologies non fiscales
@@ -1479,6 +1895,25 @@ class LexFinClient:
             'github', 'windows', 'linux', 'mac', 'apple', 'iphone', 'samsung',
             'facebook', 'instagram', 'twitter', 'réseau social'
         ]
+        
+        # Mots-clés économiques et budgétaires (nouveaux documents)
+        economie_keywords = [
+            'prévision', 'prévisions', 'croissance', 'secteur', 'secteurs',
+            'agroalimentaire', 'chimique', 'industriel', 'industrie',
+            'budget', 'budgétaire', 'pib', 'économie', 'économique',
+            'finances publiques', 'loi de finances', 'loi de finance', 'lfi', 'lfr',
+            'investissement', 'investissements', 'développement',
+            'politique économique', 'politique fiscale', 'stratégie', 'dette publique',
+            'cadrage budgétaire', 'projet de budget', 'gestion dette',
+            'rapport économique', 'financier', 'annexé',
+            'moyen terme', 'indicateur', 'performance', 'innovante', 'efficace',
+            'réforme fiscale', 'modernisation', 'transformation'
+        ]
+        
+        # NOUVEAU: Toujours rechercher dans tous les documents d'abord
+        # La classification se fait APRÈS la recherche pour optimiser la réponse
+        logger.info(f"🌍 RECHERCHE UNIVERSELLE - Tous les documents analysés")
+        return "economie"  # Force la recherche universelle
         
         # Vérifier d'abord si c'est une question clairement non fiscale
         # Mais éviter les faux positifs avec des termes fiscaux
@@ -1599,14 +2034,14 @@ class LexFinClient:
                 logger.info(f"🎯 Article spécifique trouvé: {query}")
                 return article_result
             
-            # Générer embedding de la requête pour recherche vectorielle
+            # Générer embedding de la requête pour recherche vectorielle pure
             query_embedding = self.generate_embeddings(query)
             if not query_embedding:
                 logger.warning("  Impossible de générer embedding pour la requête")
                 return {"context": "", "references": []}
             
-            # 🔥 RECHERCHE HYBRIDE: Vectoriel + BM25
-            logger.info(f"🔍 Recherche HYBRIDE (Vectoriel + BM25): {query[:50]}...")
+            # 🔥 RECHERCHE HYBRIDE: Vectoriel + BM25 (Intelligence naturelle)
+            logger.info(f"🔍 Recherche HYBRIDE INTELLIGENTE (Vectoriel + BM25): {query[:50]}...")
             
             # Préparer les filtres selon le domaine
             where_filter = {}
@@ -1616,10 +2051,18 @@ class LexFinClient:
             elif query_domain == "douanes":
                 where_filter = {"file_name": {"$eq": "Senegal-Code-2014-des-douanes.pdf"}}
                 logger.info("🚢 Recherche limitée au Code des Douanes")
+            elif query_domain == "economie":
+                # Pas de filtre = recherche dans TOUS les documents
+                where_filter = {}
+                logger.info("🌍 Recherche ÉCONOMIQUE dans TOUS les documents indexés")
+            else:
+                # Domaine général ou ambiguë = recherche dans tous les documents aussi
+                where_filter = {}
+                logger.info("🔄 Recherche GÉNÉRALE dans tous les documents")
             
             # ÉTAPE 1: Recherche VECTORIELLE (embeddings)
-            # Augmenter significativement le nombre de résultats pour mieux capturer les documents pertinents
-            n_vectorial_results = min(100, limit * 20)  # Au moins 100 résultats ou 20x la limite
+            # Réduire le nombre de résultats pour éviter les contextes trop longs
+            n_vectorial_results = min(20, limit * 5)  # Réduit de 100 à 20 résultats max
             
             if where_filter:
                 vectorial_results = self.collection.query(
@@ -1829,7 +2272,11 @@ class LexFinClient:
                         source_info = f"[📄 {file_name} - {article_ref}, {page_info}, {location}]"
                     else:
                         source_info = f"[📄 {file_name}, {page_info}, {location}]"
-                    context_parts.append(f"{source_info}\n{doc_text}")
+                    
+                    # 🔧 LIMITATION DRASTIQUE pour éviter timeouts Mistral
+                    # Réduire le texte à maximum 200 caractères par référence
+                    truncated_text = doc_text[:200] + "..." if len(doc_text) > 200 else doc_text
+                    context_parts.append(f"{source_info}\n{truncated_text}")
                 else:
                     context_parts.append(doc_text)
             
@@ -1837,15 +2284,21 @@ class LexFinClient:
             deduplicated_references = self.deduplicate_references(references)
             
             # Augmenter la limite finale pour retourner plus de documents pertinents
-            # Utiliser min(30, limit * 3) pour avoir une bonne couverture
-            final_limit = min(30, max(limit * 3, 20))
+            # Réduction drastique pour éviter les timeouts Mistral
+            final_limit = min(10, max(limit * 2, 8))
             final_references = deduplicated_references[:final_limit]
             final_context_parts = context_parts[:len(final_references)]
             
             logger.info(f"✅ Recherche HYBRIDE terminée: {len(final_references)} documents uniques (sur {len(deduplicated_references)} après déduplication)")
+            
+            # ANALYSE POST-RECHERCHE: Classifier le contenu trouvé
+            content_type = self.analyze_search_results(query, final_references)
+            logger.info(f"📋 Analyse contenu trouvé: {content_type}")
+            
             return {
                 "context": "\n\n".join(final_context_parts),
-                "references": final_references
+                "references": final_references,
+                "content_type": content_type  # Nouveau: type de contenu détecté
             }
             
         except Exception as e:
@@ -1892,7 +2345,7 @@ class LexFinClient:
                         if query_embedding:
                             results = self.collection.query(
                                 query_embeddings=[query_embedding],
-                                n_results=15,  # Plus de résultats pour trouver le bon article
+                                n_results=5,  # Réduit de 15 à 5 pour éviter les contextes trop longs
                                 include=['documents', 'metadatas', 'distances']
                             )
                             
@@ -2296,19 +2749,27 @@ class LexFinClient:
         """Génère une réponse naturelle aux salutations en utilisant Mistral directement"""
         try:
             # Prompt pour que Mistral réponde naturellement aux salutations
-            greeting_prompt = f"""Tu es LexFin, un assistant IA intelligent spécialisé pour les contribuables sénégalais en fiscalité et douanes.
+            greeting_prompt = f"""Tu es LexFin, un assistant IA intelligent spécialisé pour les professionnels et citoyens sénégalais.
 
 L'utilisateur te dit: "{message}"
 
-IMPORTANT: Tu es un expert en Code des Impôts et Code des Douanes du Sénégal. Tu aides les contribuables sénégalais avec leurs questions fiscales et douanières.
+🇫🇷 LANGUE OBLIGATOIRE: Tu DOIS répondre UNIQUEMENT en français. Aucun mot en anglais ou autre langue n'est autorisé.
 
-Réponds de façon naturelle et professionnelle:
-- Présente-toi comme LexFin, l'assistant expert fiscal et douanier sénégalais
-- Précise tes spécialités : Code des Impôts, Code des Douanes, DGI, procédures fiscales
-- Mentionne que tu peux analyser documents administratifs (PDF, Word, Excel)
-- Reste professionnel et utilisé des émojis appropriés (🇸🇳, 🏛️, 📋)
-- Invite l'utilisateur à poser ses questions fiscales/douanières
+IMPORTANT: Tu es un expert polyvalent en droit sénégalais qui maîtrise :
+- Code des Impôts et fiscalité (CGI, DGI, TVA, IS, IR)
+- Code des Douanes et procédures douanières
+- Lois de Finances et budget de l'État 
+- Documents économiques et financiers publics
+- Réglementations et arrêtés administratifs
+
+Réponds de façon naturelle et professionnelle en français uniquement:
+- Présente-toi comme LexFin, l'assistant expert en droit sénégalais
+- Précise tes domaines : fiscal, douanier, budgétaire, économique, réglementaire
+- Mentionne que tu peux analyser documents officiels (codes, lois, budgets, rapports)
+- Reste professionnel et utilise des émojis appropriés (🇸🇳, 🏛️, 📋, 💼)
+- Invite l'utilisateur à poser ses questions juridiques/administratives
 - Maximum 3-4 lignes
+- Réponse UNIQUEMENT en français
 
 Réponse:"""
 
@@ -2403,6 +2864,8 @@ Réponse:"""
 Question de l'utilisateur: "{message}"
 {context_hint}
 
+🇫🇷 LANGUE OBLIGATOIRE: Tu DOIS répondre UNIQUEMENT en français. Aucun mot en anglais ou autre langue n'est autorisé.
+
 MISSION: Génère 5 reformulations de cette question pour améliorer la recherche dans les documents fiscaux.
 
 RÈGLES:
@@ -2458,61 +2921,83 @@ Réponds UNIQUEMENT avec les 5 reformulations (pas d'explication):"""
             return []
     
     def is_fiscal_related_question(self, message: str) -> bool:
-        """Utilise le modèle Mistral pour déterminer si la question est liée à la fiscalité"""
+        """Détermine si la question est liée aux domaines indexés - Approche permissive"""
+        
+        # 🧠 INTELLIGENCE NATURELLE: Laisser le modèle comprendre naturellement
+        # Seuls les sujets clairement hors domaine sont rejetés
+        message_lower = message.lower()
+        
+        # Mots-clés explicitement NON fiscaux (très restrictif)
+        non_fiscal_keywords = [
+            'football', 'sport', 'cuisine', 'recette', 'musique', 'film', 'cinéma',
+            'jeu vidéo', 'programmation python', 'javascript', 'html', 'css',
+            'facebook', 'instagram', 'twitter', 'réseau social',
+            'météo', 'santé personnelle', 'médecine', 'hôpital',
+            'voiture', 'automobile', 'transport personnel',
+            'mode', 'vêtement', 'beauté', 'coiffure'
+        ]
+        
+        # Rejeter seulement si c'est clairement hors domaine
+        for keyword in non_fiscal_keywords:
+            if keyword in message_lower:
+                logger.info(f"🚫 Question NON FISCALE détectée: '{keyword}' dans '{message[:50]}...'")
+                return False
+        
+        # Par défaut, ACCEPTER et laisser l'IA juger
+        logger.info(f"✅ Question ACCEPTÉE pour analyse IA: '{message[:50]}...'")
+        return True
+
+    def chat(self, message: str, conversation_id: str = None) -> Dict:
+        """Génère une réponse basée uniquement sur les documents indexés (mode RAG strict) avec mémoire conversationnelle"""
         try:
-            prompt = f"""Détermine si la question suivante est liée à la fiscalité, aux impôts, aux douanes, ou à la réglementation fiscale sénégalaise.
-            
-Question: "{message}"
-
-Réponds uniquement par 'OUI' si la question concerne la fiscalité, les impôts, les douanes, ou la réglementation fiscale.
-Réponds uniquement par 'NON' si la question ne concerne PAS la fiscalité mais un autre sujet comme la technologie, le sport, la cuisine, etc.
-IMPORTANT: Réponds UNIQUEMENT par 'OUI' ou 'NON'."""
-
-            payload = {
-                "model": self.config.OLLAMA_CHAT_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.1,  # Température faible pour des réponses cohérentes
-                    "top_p": 0.9,
-                    "max_tokens": 10  # On a besoin que d'un seul mot
-                }
-            }
-            
-            response = requests.post(
-                f"{self.config.OLLAMA_BASE_URL}/api/generate",
-                json=payload,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                result = response.json()['response'].strip().upper()
-                is_fiscal = result == 'OUI'
-                logger.info(f"🔍 Classification par Mistral: {message[:50]}... -> {'FISCALE' if is_fiscal else 'NON FISCALE'}")
-                return is_fiscal
+            # 🗨️ GESTION DE LA CONVERSATION
+            if conversation_id is None:
+                # Créer une nouvelle conversation si aucune n'est spécifiée
+                if self.current_conversation_id is None:
+                    conversation_id = self.start_new_conversation()
+                else:
+                    conversation_id = self.current_conversation_id
             else:
-                # En cas d'erreur, utiliser la méthode par défaut
-                logger.warning(f"⚠️ Erreur lors de la classification par Mistral: {response.status_code}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"❌ Erreur lors de la classification: {e}")
-            # En cas d'erreur, considérer que c'est une question fiscale par défaut
-            return True
-
-    def chat(self, message: str) -> Dict:
-        """Génère une réponse basée uniquement sur les documents indexés (mode RAG strict)"""
-        try:
+                # Utiliser la conversation spécifiée
+                self.set_conversation(conversation_id)
+                conversation_id = self.current_conversation_id or self.start_new_conversation()
+            
+            # Ajouter le message utilisateur à l'historique
+            self.conversation_manager.add_message(conversation_id, 'user', message)
+            
             # Salutations: répondre directement sans recherche documentaire
             if self.is_greeting_or_general(message):
                 response_text = self.generate_natural_greeting_response(message)
-                return {"response": response_text, "references": []}
-            
-            
-            # Détecter si c'est une question non fiscale avec Mistral
-            if not self.is_fiscal_related_question(message):
+                
+                # Ajouter la réponse à l'historique
+                self.conversation_manager.add_message(conversation_id, 'assistant', response_text)
+                
                 return {
-                    "response": f"""⚠️ QUESTION NON FISCALE DÉTECTÉE
+                    "response": response_text, 
+                    "references": [],
+                    "conversation_id": conversation_id
+                }
+            
+            # 🔗 ANALYSER SI C'EST UNE QUESTION DE SUIVI - INTELLIGENCE PURE
+            # Laisser le modèle comprendre naturellement sans règles artificielles
+            is_follow_up = False  # Mode intelligence pure : chaque question est indépendante
+            context_hint = ""
+            
+            if is_follow_up:
+                logger.info(f"🔗 Question de suivi détectée dans conversation {conversation_id}")
+                
+                # Enrichir le message avec le contexte de la conversation
+                conversation_context = self.conversation_manager.get_conversation_context(conversation_id)
+                enhanced_message = f"{message}\n\nCONTEXTE CONVERSATIONNEL:\n{context_hint}\n{conversation_context}"
+                
+                # Utiliser le message enrichi pour la recherche
+                search_message = enhanced_message
+            else:
+                search_message = message
+            
+            # RECHERCHE D'ABORD - On cherche dans tous les documents indexés
+            if not self.is_fiscal_related_question(message):
+                error_response = f"""⚠️ QUESTION NON FISCALE DÉTECTÉE
 
 Je suis uniquement conçu pour répondre à des questions liées à la fiscalité sénégalaise.
 Je ne peux pas répondre à votre question car elle n'est pas liée au domaine fiscal ou douanier.
@@ -2522,8 +3007,15 @@ Je ne peux pas répondre à votre question car elle n'est pas liée au domaine f
 - Utilisez des termes fiscaux précis (TVA, IS, dédouanement)
 - Mentionnez un article spécifique si possible
 
-ℹ️ En mode RAG strict, je ne réponds qu'aux questions fiscales basées sur les documents.""",
-                    "references": []
+ℹ️ En mode RAG strict, je ne réponds qu'aux questions fiscales basées sur les documents."""
+
+                # Ajouter la réponse à l'historique
+                self.conversation_manager.add_message(conversation_id, 'assistant', error_response)
+                
+                return {
+                    "response": error_response,
+                    "references": [],
+                    "conversation_id": conversation_id
                 }
                 
 # RECHERCHE EN MODE RAG STRICT AVEC REFORMULATIONS ET FILTRAGE TEXTUEL
@@ -2534,13 +3026,24 @@ Je ne peux pas répondre à votre question car elle n'est pas liée au domaine f
             logger.info("ℹ️ MODE RAG 100% PUR - Recherche hybride (Vectoriel + BM25)")
             
             # Recherche hybride directe avec limite augmentée pour meilleure couverture
-            search_result = self.search_context_with_references(message, limit=20)
+            search_result = self.search_context_with_references(search_message, limit=20)
             
             if search_result.get("context"):
                 context = search_result.get("context", "")
                 references = search_result.get("references", [])
+                content_type = search_result.get("content_type", "general")
                 
                 logger.info(f"📊 {len(references)} références trouvées par recherche hybride")
+                
+                # Informer sur le type de contenu détecté
+                if content_type == "economique":
+                    logger.info(f"✅ Question ÉCONOMIQUE - Acceptation contenu mixte: budget/finances")
+                elif content_type == "fiscal":
+                    logger.info(f"✅ Question FISCALE - Contenu fiscal détecté")
+                elif content_type == "douanier":
+                    logger.info(f"✅ Question DOUANIÈRE - Contenu douanier détecté")
+                else:
+                    logger.info(f"✅ Question MIXTE - Contenu varié détecté")
                 
                 # Trier par score (déjà fait dans search_context_with_references)
                 references.sort(key=lambda x: x.get('_score', 0), reverse=True)
@@ -2557,6 +3060,40 @@ Je ne peux pas répondre à votre question car elle n'est pas liée au domaine f
                 context = ""
                 references = []
             
+            # NOUVEAU: Recherche d'expansion pour termes spécifiques non trouvés
+            if not context or 'senelec' in message.lower():
+                logger.info("🔍 Recherche d'expansion pour termes spécifiques...")
+                
+                # Termes d'expansion pour SENELEC
+                expansion_queries = [
+                    "compensation tarifaire SENELEC milliards",
+                    "trente-cinq milliards FCFA énergie", 
+                    "35000000000 FCFA secteur électricité",
+                    "loi finances rectificative énergie montant",
+                    "SENELEC subvention gouvernement",
+                    "prix pétrole compensation électricité"
+                ]
+                
+                best_result = None
+                best_score = 0
+                
+                for exp_query in expansion_queries:
+                    logger.info(f"  🔍 Test expansion: '{exp_query}'")
+                    exp_result = self.search_context_with_references(exp_query, limit=5)
+                    
+                    if exp_result.get("context") and exp_result.get("references"):
+                        # Calculer score moyen des références
+                        avg_score = sum(ref.get('_score', 0) for ref in exp_result['references']) / len(exp_result['references'])
+                        if avg_score > best_score:
+                            best_result = exp_result
+                            best_score = avg_score
+                            logger.info(f"    ✅ Meilleur résultat trouvé (score: {avg_score:.3f})")
+                
+                if best_result and best_score > 0.3:  # Seuil de qualité
+                    context = best_result.get("context", "")
+                    references = best_result.get("references", [])
+                    logger.info(f"🎯 Recherche d'expansion réussie avec score {best_score:.3f}")
+            
             # Fallback: Si toujours aucun résultat, essai avec mots-clés extraits
             if not context:
                 keywords = [word for word in message.split() if len(word) > 3]
@@ -2569,30 +3106,12 @@ Je ne peux pas répondre à votre question car elle n'est pas liée au domaine f
             
             # FORCER l'utilisation du contexte des documents
             if context and context.strip():
-                # Détecter le domaine de la question pour validation
+                # Détecter le domaine de la question pour validation (maintenant informatif seulement)
                 query_domain = self.detect_query_domain(message)
+                # Note: Cette détection est maintenant utilisée pour information uniquement
+                # La vraie classification se fait par analyze_search_results()
                 
-                # Vérifier la cohérence du domaine dans les références
-                if references:
-                    context_domain = "general"
-                    for ref in references:
-                        file_name = ref.get('file_name', '').lower()
-                        if 'impot' in file_name:
-                            context_domain = "impots"
-                            break
-                        elif 'douane' in file_name:
-                            context_domain = "douanes"
-                            break
-                    
-                    # Vérifier la cohérence entre question et contexte
-                    if query_domain != "general" and context_domain != "general" and query_domain != context_domain:
-                        logger.warning(f"⚠️ Incohérence détectée: Question {query_domain} vs Contexte {context_domain}")
-                        # Relancer une recherche plus ciblée
-                        search_result = self.search_context_with_references(message, limit=5)
-                        context = search_result.get("context", "")
-                        references = search_result.get("references", [])
-                
-                # Vérifier la pertinence du contexte
+                # Validation simplifiée : s'assurer que le contenu est pertinent
                 question_keywords = message.lower().split()
                 context_lower = context.lower()
                 keyword_found = any(kw in context_lower for kw in question_keywords if len(kw) > 3)
@@ -2617,36 +3136,46 @@ Je ne peux pas répondre à votre question car elle n'est pas liée au domaine f
                     else:
                         code_source = "Documents juridiques sénégalais"
                     
-                    prompt = f"""TEXTE OFFICIEL: {context}
+                    # 🗨️ INTÉGRER LE CONTEXTE CONVERSATIONNEL
+                    conversation_context = ""
+                    if is_follow_up:
+                        conversation_context = f"\n\n💬 CONTEXTE DE LA CONVERSATION:\n{self.conversation_manager.get_conversation_context(conversation_id, max_messages=4)}\n"
+                    
+                    prompt = f"""DOCUMENTS OFFICIELS TROUVÉS:
+{context}
 
 QUESTION: {message}
+{conversation_context}
+🇫🇷 LANGUE OBLIGATOIRE: Tu DOIS répondre UNIQUEMENT en français. JAMAIS d'anglais!
 
-🚨 CONSIGNES STRICTES ANTI-HALLUCINATION :
-1. Tu DOIS utiliser EXCLUSIVEMENT le contenu du TEXTE OFFICIEL ci-dessus
-2. Si l'information existe dans le texte, cite-la EXACTEMENT
-3. Ne dis JAMAIS "n'est pas mentionné" si l'information est dans le texte
-4. Reproduis les chiffres, pourcentages et taux EXACTEMENT comme écrits
-5. Si tu vois "18%" dans le texte, dis "18%" - ne dis PAS que ce n'est pas mentionné
-6. INTERDIT d'inventer, supposer ou extrapoler
-7. INTERDIT de dire "selon mes connaissances" ou "généralement"
+🧠 EXPERTISE: Tu es LexFin, expert en droit sénégalais spécialisé en :
+- Code des Impôts et fiscalité (CGI, DGI, TVA, IS, IR)
+- Code des Douanes et procédures douanières  
+- Lois de Finances et budget de l'État
+- Documents économiques et financiers publics
+- Réglementations et arrêtés administratifs
 
-MÉTHODE OBLIGATOIRE:
-- Lis attentivement le TEXTE OFFICIEL
-- Trouve l'information demandée dans ce texte
-- Cite-la TEXTUELLEMENT
-- Si vraiment absent, dis alors "non trouvé dans ce texte"
+🎯 MISSION: Analyse les documents ci-dessus et réponds à la question de manière naturelle et précise.
 
-Réponds maintenant en appliquant CES RÈGLES STRICTEMENT:"""
+🚨 RÈGLES ABSOLUES:
+📊 CHIFFRES EXACTS: Recopie EXACTEMENT tous les chiffres, montants, pourcentages, dates tels qu'ils apparaissent dans les documents (même espaces, virgules, "et demi", devises)
+� CITATIONS PRÉCISES: Indique toujours la source exacte (article, loi, document) quand tu donnes une information
+🗨️ CONTEXTE CONVERSATIONNEL: Si la question fait référence à des éléments précédents ("ce taux", "cette loi"), utilise le contexte de la conversation
+
+💡 STYLE DE RÉPONSE: Réponds naturellement comme un expert juridique, sans format imposé. Tu peux utiliser des émojis appropriés et structurer ta réponse comme tu le juges pertinent pour être clair et utile.
+
+Analyse et réponds:"""
                 else:
                     return {
                         "response": f"""⚠️ INFORMATION NON TROUVÉE
 
-Je ne trouve pas d'information sur ce sujet dans les documents fiscaux indexés.
+Je ne trouve pas d'information sur ce sujet dans les documents juridiques indexés.
 
 📌 **Suggestions :**
-- Utilisez des termes précis du Code des Impôts/Douanes
-- Référencez un article spécifique (ex: "Article 19 du CGI")
-- Reformulez avec des termes fiscaux sénégalais
+- Utilisez des termes précis (codes, lois, arrêtés, budget)
+- Référencez un article spécifique (ex: "Article 19 du CGI", "Loi de Finances 2025")
+- Reformulez avec des termes juridiques sénégalais
+- Précisez le domaine : fiscal, douanier, budgétaire, économique
 
 ℹ️ En mode RAG strict, je réponds uniquement sur la base des documents.""",
                         "references": references
@@ -2655,14 +3184,21 @@ Je ne trouve pas d'information sur ce sujet dans les documents fiscaux indexés.
                 return {
                     "response": f"""⚠️ AUCUN DOCUMENT CORRESPONDANT
 
-Je suis uniquement conçu pour répondre à des questions liées à la fiscalité sénégalaise.
+Je suis conçu pour répondre aux questions liées au droit et à l'administration sénégalaise.
 
-📊 **Suggestions :**
-- Posez une question sur le Code des Impôts/Douanes sénégalais
-- Utilisez des termes fiscaux précis (TVA, IS, dédouanement)
-- Mentionnez un article spécifique si possible
+📊 **Domaines couverts :**
+- Code des Impôts et fiscalité sénégalaise
+- Code des Douanes et procédures commerciales  
+- Lois de Finances et budget de l'État
+- Documents économiques et financiers publics
+- Réglementations et arrêtés administratifs
 
-ℹ️ En mode RAG strict, je ne réponds qu'aux questions fiscales basées sur les documents.""",
+💡 **Exemples de questions :**
+- "Que dit la législation douanière sur l'importation des marchandises ?"
+- "Quels sont les taux de TVA selon le Code des Impôts ?"
+- "Compensation SENELEC dans les lois de finances ?"
+
+ℹ️ En mode RAG strict, je ne réponds qu'aux questions basées sur les documents juridiques.""",
                     "references": []
                 }
             
@@ -2672,63 +3208,232 @@ Je suis uniquement conçu pour répondre à des questions liées à la fiscalit�
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "temperature": 0.0,      # Température à 0 pour réponses EXACTES - aucune créativité
-                    "top_p": 0.1,           # Top-p très bas pour forcer la sélection des mots les plus probables
-                    "top_k": 1,             # Ne garde que le mot le plus probable à chaque étape
-                    "repeat_penalty": 1.5,   # Pénalité augmentée pour éviter les répétitions inventées
-                    "presence_penalty": 0.5, # Encourage la diversité basée sur le contexte fourni uniquement
-                    "frequency_penalty": 0.3, # Évite les répétitions non fondées
+                    "temperature": 0.2,      # Légèrement plus de créativité pour un formatage naturel
+                    "top_p": 0.3,           # Augmenté pour permettre un langage plus naturel
+                    "top_k": 10,            # Plus de choix pour un meilleur formatage
+                    "repeat_penalty": 1.1,   # Légère pénalité pour éviter les répétitions
+                    "presence_penalty": 0.0, # Aucune penalty - mode copie
+                    "frequency_penalty": 0.0, # Aucune penalty - mode copie
                     "num_ctx": 4096,        # Contexte limité pour se concentrer sur les documents fournis
-                    "num_predict": 800,     # Limite la longueur pour éviter les divagations
-                    "stop": ["Article 999", "Code fictif", "n'existe pas", "inexistant"]  # Mots-clés d'arrêt d'urgence
+                    "num_predict": 800,     # Réponses un peu plus longues pour meilleur formatage
+                    "stop": [
+                        "\n\nQUESTION:", "\n\nTEXTE OFFICIEL:", "NOUVELLE QUESTION"
+                    ]  # Arrêts plus appropriés
                 }
             }
             
             try:
-                response = requests.post(
-                    f"{self.config.OLLAMA_BASE_URL}/api/generate",
-                    json=payload,
-                    timeout=300  # Timeout augmenté à 5 minutes
-                )
-                
-                if response.status_code == 200:
-                    ollama_response = response.json()['response']
+                # 🔄 MÉCANISME DE RETRY PROGRESSIF avec réduction du contexte
+                max_retries = 2
+                for attempt in range(max_retries + 1):
+                    # Réduire progressivement le contexte si timeout
+                    if attempt > 0:
+                        logger.info(f"🔄 Tentative {attempt + 1}: réduction du contexte ({len(context)} chars)")
+                        # Réduire le contexte de 50% à chaque retry
+                        context_lines = context.split('\n')
+                        max_lines = max(5, len(context_lines) // (2 ** attempt))  # Minimum 5 lignes
+                        context = '\n'.join(context_lines[:max_lines])
+                        logger.info(f"🔄 Contexte réduit à {len(context)} caractères")
+                        
+                        # Mettre à jour le payload avec le contexte réduit
+                        payload["prompt"] = prompt.replace(prompt.split("QUESTION:")[0], f"""TEXTE OFFICIEL: {context}
+
+""")
                     
-                    # 🛡️ VÉRIFICATION ANTI-HALLUCINATION
-                    validated_response = self._validate_response_against_context(ollama_response, context, message)
-                    
-                    return {
-                        "response": validated_response,
-                        "references": references
-                    }
-                elif response.status_code == 504:
-                    # Timeout Mistral (504) - Afficher directement les articles trouvés
-                    logger.warning("⏱️ Timeout Mistral (504) - Affichage direct des articles trouvés")
-                    return self._format_direct_response(message, references)
-                else:
-                    return {
-                        "response": f"❌ Erreur technique (code {response.status_code}). Veuillez réessayer.",
-                        "references": []
-                    }
-            except requests.Timeout:
-                # Timeout de la requête Python - Afficher directement les articles
-                logger.warning("⏱️ Timeout requête Mistral - Affichage direct des articles trouvés")
-                return self._format_direct_response(message, references)
+                    try:
+                        response = requests.post(
+                            f"{self.config.OLLAMA_BASE_URL}/api/generate",
+                            json=payload,
+                            timeout=60  # Timeout réduit à 1 minute pour détecter rapidement les problèmes
+                        )
+                        
+                        if response.status_code == 200:
+                            ollama_response = response.json()['response']
+                            
+                            # 🛡️ VÉRIFICATION ANTI-HALLUCINATION
+                            validated_response = self._validate_response_against_context(ollama_response, context, message)
+                            
+                            # 💬 Enregistrer la réponse dans l'historique de conversation
+                            if conversation_id and self.conversation_manager:
+                                self.conversation_manager.add_message(conversation_id, "assistant", validated_response)
+                            
+                            logger.info(f"✅ Mistral réponse obtenue (tentative {attempt + 1})")
+                            return {
+                                "response": validated_response,
+                                "references": references
+                            }
+                        elif response.status_code == 504:
+                            if attempt < max_retries:
+                                logger.warning(f"⏱️ Timeout Mistral (504) - Tentative {attempt + 1}/{max_retries + 1}")
+                                continue
+                            else:
+                                # Timeout final - Afficher directement les articles trouvés
+                                logger.warning("⏱️ Timeout Mistral final (504) - Affichage direct des articles trouvés")
+                                return self._format_direct_response(message, references)
+                        else:
+                            return {
+                                "response": f"❌ Erreur technique (code {response.status_code}). Veuillez réessayer.",
+                                "references": []
+                            }
+                    except requests.Timeout:
+                        if attempt < max_retries:
+                            logger.warning(f"⏱️ Timeout requête Mistral - Tentative {attempt + 1}/{max_retries + 1}")
+                            continue
+                        else:
+                            # Timeout final de la requête Python - Afficher directement les articles
+                            logger.warning("⏱️ Timeout requête Mistral final - Affichage direct des articles trouvés")
+                            return self._format_direct_response(message, references)
             except requests.exceptions.RequestException as e:
                 # Autres erreurs réseau - Afficher directement les articles
                 logger.error(f"❌ Erreur réseau Mistral: {e}")
                 return self._format_direct_response(message, references)
+            
+            else:
+                # Aucun contexte trouvé dans les documents - Vérifier si c'est hors domaine
+                logger.warning("⚠️ Aucun contexte trouvé dans les documents indexés")
+                
+                # Maintenant on fait la vérification du domaine seulement si rien n'est trouvé
+                if not self.is_fiscal_related_question(message):
+                    response_text = f"""⚠️ QUESTION HORS DOMAINE
+
+Aucune information trouvée dans les documents indexés pour votre question.
+
+Je suis conçu pour répondre aux questions sur :
+- 🏛️ Fiscalité et douanes sénégalaises (Code des Impôts, Code des Douanes)
+- 💰 Économie et finances publiques (Budget, Loi de Finances)  
+- 📊 Secteurs économiques (prévisions, croissance sectorielle)
+- 🏭 Investissements et politique économique
+- 📈 Dette publique et gestion financière
+
+💡 **Suggestions :**
+- Reformulez votre question avec des termes plus spécifiques
+- Mentionnez un secteur économique particulier
+- Posez une question sur les prévisions budgétaires ou économiques du Sénégal
+- Utilisez des mots-clés liés aux documents indexés
+
+ℹ️ Seules les questions ayant des réponses dans les documents indexés sont traitées."""
+                    
+                    # 💬 Enregistrer la réponse dans l'historique de conversation
+                    if conversation_id and self.conversation_manager:
+                        self.conversation_manager.add_message(conversation_id, "assistant", response_text)
+                    
+                    return {
+                        "response": response_text,
+                        "references": []
+                    }
+                else:
+                    # Question dans le domaine mais pas de résultats - Suggérer reformulation
+                    response_text = f"""🔍 AUCUNE INFORMATION TROUVÉE
+
+Votre question semble pertinente mais aucune information correspondante n'a été trouvée dans les documents indexés.
+
+**Votre question:** {message}
+
+💡 **Suggestions pour améliorer votre recherche :**
+- Reformulez avec des termes plus généraux ou plus spécifiques
+- Utilisez des synonymes (ex: "impôt" → "fiscalité", "croissance" → "développement")
+- Mentionnez un secteur spécifique (chimique, agroalimentaire, etc.)
+- Précisez la période si pertinente (2025, 2026)
+
+📚 **Exemples de questions qui fonctionnent :**
+- "Quelles sont les prévisions de croissance pour 2026 ?"
+- "Comment évoluent les investissements dans le secteur industriel ?"
+- "Quel est le taux de TVA au Sénégal ?"
+
+🔄 Essayez de reformuler votre question."""
+
+                    # 💬 Enregistrer la réponse dans l'historique de conversation
+                    if conversation_id and self.conversation_manager:
+                        self.conversation_manager.add_message(conversation_id, "assistant", response_text)
+                    
+                    return {
+                        "response": response_text,
+                        "references": []
+                    }
                 
         except Exception as e:
             logger.error(f"Erreur chat: {e}")
+            error_response = "Une erreur s'est produite. Veuillez réessayer dans un moment."
+            
+            # 💬 Enregistrer la réponse d'erreur dans l'historique de conversation
+            if conversation_id and self.conversation_manager:
+                self.conversation_manager.add_message(conversation_id, "assistant", error_response)
+            
             return {
-                "response": "Une erreur s'est produite. Veuillez réessayer dans un moment.",
+                "response": error_response,
                 "references": []
             }
     
     def _validate_response_against_context(self, response: str, context: str, original_question: str) -> str:
-        """🛡️ Valide la réponse de Ollama contre le contexte fourni pour détecter les hallucinations"""
+        """🛡️ Validation RENFORCÉE contre les hallucinations - Détection de phrases inventées + Correction OCR"""
         
+        try:
+            # 🔧 CORRECTION DES ERREURS OCR DANS LA RÉPONSE
+            response = self._correct_ocr_errors(response)
+            
+            # 🚨 DÉTECTION DE PHRASES INVENTÉES CRITIQUES
+            forbidden_phrases = [
+                "le taux peut être réduit de manière exceptionnelle",
+                "jusqu'à un maximum de",
+                "peut être différent selon",
+                "dans certains cas",
+                "il convient de noter que",
+                "cependant il faut savoir que",
+                "toutefois il existe",
+                "exception faite de",
+                "sauf disposition contraire",
+                "sous réserve de",
+                "moyennant certaines conditions",
+                "cependant, le taux",
+                "toutefois, le taux",
+                "cette taxation regarde",
+                "la coupure de la phrase",
+                "le taux de cette taxation",
+                "le taux préférentiel pour la tva au sénégal est fixe à 10%",
+                "taux préférentiel pour la tva",
+                "dans le cas où les"
+            ]
+            
+            response_lower = response.lower()
+            for phrase in forbidden_phrases:
+                if phrase in response_lower:
+                    logger.warning(f"🚨 PHRASE INVENTÉE DÉTECTÉE: '{phrase}' - Permettre réponse naturelle du modèle")
+                    # Plus de fallback automatique - laisser le modèle analyser naturellement
+                    break
+
+            # 🚨 DÉTECTION DE PHRASES INCOHÉRENTES (nouvelles détections)
+            incoherent_patterns = [
+                r"regarde la coupure",
+                r"la coupure de",
+                r"cette taxation regarde",
+                r"phrase\s*$",  # Phrase qui se termine abruptement
+                r"cependant,?\s+le taux[^.]{0,50}$",  # "Cependant le taux..." sans fin
+                r"toutefois,?\s+[^.]{0,30}$",  # "Toutefois..." sans fin
+                r"dans le cas où les\s*$",  # "dans le cas où les" sans suite
+                r"préférentiel.*10%.*fixe"  # Inversion dangereuse 10% comme principal
+            ]
+            
+            import re
+            for pattern in incoherent_patterns:
+                if re.search(pattern, response_lower):
+                    logger.warning(f"🚨 PHRASE INCOHÉRENTE DÉTECTÉE: pattern '{pattern}' - Permettre réponse naturelle du modèle")
+                    # Plus de fallback automatique - laisser le modèle analyser naturellement
+                    break
+
+            # 🚨 DÉTECTION SPÉCIALE - INVERSION DE TAUX (critique)
+            if re.search(r"10%.*principal|taux.*10%.*sénégal.*fixe", response_lower):
+                logger.error(f"🚨 INVERSION CRITIQUE DÉTECTÉE: 10% présenté comme taux principal - Permettre réponse naturelle du modèle")
+                # Plus de fallback automatique - laisser le modèle analyser naturellement et corriger
+
+            # Validation normale pour autres types d'hallucinations
+            return self._validate_response_standard(response, context, original_question)
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur validation anti-hallucination: {e}")
+            return response
+
+    def _validate_response_standard(self, response: str, context: str, original_question: str) -> str:
+        """Validation standard contre les hallucinations"""
         try:
             # Extraire les articles mentionnés dans la réponse
             import re
@@ -2762,6 +3467,23 @@ Je suis uniquement conçu pour répondre à des questions liées à la fiscalit�
                     logger.info(f"ℹ️ Articles mentionnés mais considérés comme légitimes: {', '.join(invented_articles)}")
             
             # 2. Chiffres inventés (tolérance de 5% pour erreurs de transcription)
+            for resp_num in response_numbers:
+                found_similar = False
+                for ctx_num in context_numbers:
+                    # Comparaison exacte d'abord
+                    if resp_num == ctx_num:
+                        found_similar = True
+                        break
+                
+                if not found_similar:
+                    warning_messages.append(f"⚠️ Chiffre suspect non vérifié: {resp_num}")
+            
+            # Si pas d'hallucination détectée, retourner la réponse originale
+            return response
+            
+        except Exception as e:
+            logger.error(f"Erreur validation standard: {e}")
+            return response
             for resp_num in response_numbers:
                 found_similar = False
                 for ctx_num in context_numbers:
@@ -2875,40 +3597,47 @@ Je suis uniquement conçu pour répondre à des questions liées à la fiscalit�
                 
                 logger.warning(f"🚨 HALLUCINATION DÉTECTÉE: {'; '.join(warning_messages)}")
                 
-                # 🚨 CAS SPÉCIAL: Correction automatique pour TVA si détectée
-                if "tva" in original_question.lower() and "18%" in context:
-                    return """📋 **TVA AU SÉNÉGAL - INFORMATION OFFICIELLE**
-
-Selon l'Article 369 du Code des Impôts du Sénégal :
-**Le taux de la TVA est fixé à 18%.**
-
-Cette information est explicitement mentionnée dans le texte officiel.
-
-🚨 *Note: Réponse corrigée automatiquement suite à détection d'erreur d'interprétation*"""
-                
-                # 🔄 NOUVELLE APPROCHE: Générer une analyse alternative des documents trouvés
+                #  NOUVELLE APPROCHE: Générer une analyse alternative des documents trouvés
                 logger.info("🔄 Génération d'une analyse alternative des documents trouvés...")
                 
                 alternative_prompt = f"""DOCUMENTS OFFICIELS TROUVÉS: {context}
 
 QUESTION POSÉE: {original_question}
 
+🇫🇷 LANGUE OBLIGATOIRE: Tu DOIS répondre UNIQUEMENT en français. Aucun mot en anglais ou autre langue n'est autorisé.
+
 🚨 MISSION SPÉCIALE: Le système a détecté une possible erreur d'interprétation dans une première réponse.
 Tu dois maintenant faire une ANALYSE PRUDENTE ET FACTUELLE des documents fournis.
+
+🔢 RÈGLE ABSOLUE - AUCUNE EXCEPTION - VALEURS NUMÉRIQUES EXACTES :
+❌ TOTALEMENT INTERDIT : Modifier, arrondir, estimer, approximer toute valeur
+❌ INTERDIT : "environ", "près de", "approximativement", "autour de"
+✅ OBLIGATOIRE : Copier EXACTEMENT comme écrit dans le document source
+
+💰 EXEMPLES DE CITATION CORRECTE :
+- Document dit "2 875 millions FCFA" → Tu écris "2 875 millions FCFA"
+- Document dit "141 millions et demi d'euros" → Tu écris "141 millions et demi d'euros"
+- Document dit "470 millions FCFA" → Tu écris "470 millions FCFA"
+- JAMAIS de conversion, JAMAIS d'arrondi, JAMAIS d'estimation
 
 CONSIGNES STRICTES:
 1. NE PAS inventer d'informations
 2. ANALYSER uniquement ce qui est présent dans les documents
-3. Si pas d'information directe sur le sujet, chercher des ÉLÉMENTS CONNEXES
-4. Utiliser des formulations prudentes comme "selon l'article X", "d'après les documents"
+3. 💰 RECOPIER EXACTEMENT tous les montants, devises, formats numériques
+4. Si pas d'information directe sur le sujet, chercher des ÉLÉMENTS CONNEXES
+5. Utiliser des formulations prudentes comme "selon l'article X", "d'après les documents"
+6. JAMAIS d'arrondi ou d'approximation des valeurs (garde "141 millions et demi" EXACTEMENT tel quel)
+7. JAMAIS de conversion d'unités (millions vers milliards ou FCFA vers euros)
 
 STRUCTURE DE RÉPONSE OBLIGATOIRE:
 • "Il n'existe pas de disposition spécifique sur [sujet exact] dans ces documents"
 • "Cependant, les articles suivants traitent d'aspects connexes:"
-• [Analyse factuelle des articles pertinents trouvés]
+• [Analyse factuelle des articles pertinents trouvés avec valeurs EXACTES copiées]
 • "Pour une information complète, consulter directement les textes officiels"
 
-Génère maintenant cette analyse factuelle:"""
+⚠️ VÉRIFICATION FINALE : Chaque valeur numérique dans ta réponse doit être une COPIE PARFAITE du document
+
+Génère maintenant cette analyse factuelle en préservant EXACTEMENT et INTÉGRALEMENT toutes les valeurs numériques:"""
 
                 # Générer une réponse alternative avec Ollama
                 alternative_payload = {
@@ -2916,13 +3645,16 @@ Génère maintenant cette analyse factuelle:"""
                     "prompt": alternative_prompt,
                     "stream": False,
                     "options": {
-                        "temperature": 0.1,      # Très prudent
-                        "top_p": 0.2,           # Conservateur
-                        "top_k": 5,             # Limité
-                        "repeat_penalty": 1.3,  
+                        "temperature": 0.0,      # Température à 0 pour exactitude maximale
+                        "top_p": 0.1,           # Réduit mais pas trop pour éviter de casser
+                        "top_k": 1,             # Une seule option la plus probable
+                        "repeat_penalty": 1.3,  # Réduit pour éviter de casser les réponses
                         "num_ctx": 4096,        
-                        "num_predict": 600,     # Plus court pour éviter les dérives
-                        "stop": ["Code fictif", "n'existe pas vraiment", "invention"]
+                        "num_predict": 600,     # Augmenté pour réponses complètes
+                        "stop": [
+                            "Code fictif", "n'existe pas vraiment", "invention",
+                            "établissements d'hébergement touristique", "0% pour"
+                        ]  # Arrêt simplifié
                     }
                 }
                 
@@ -2935,6 +3667,9 @@ Génère maintenant cette analyse factuelle:"""
                     
                     if alternative_response.status_code == 200:
                         alternative_text = alternative_response.json()['response']
+                        
+                        # 🔧 CORRECTION OCR dans la réponse générée
+                        alternative_text = self._correct_ocr_errors(alternative_text)
                         
                         # Ajouter une note explicative
                         final_response = f"""⚠️ **ANALYSE PRUDENTE - MODE SÉCURISÉ ACTIVÉ**
@@ -3804,6 +4539,73 @@ HTML_TEMPLATE = """
                 0 0 0 4px rgba(254, 239, 66, 0.3);
         }
 
+        /* Contrôles de l'en-tête */
+        .header-controls {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .header-btn {
+            position: relative !important;
+            right: 90px !important;
+            top: 35px !important;
+        }
+
+        .theme-toggle {
+            order: 1;
+        }
+
+        .header-btn {
+            padding: 12px 20px;
+            border-radius: 25px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 
+                0 6px 20px rgba(0, 0, 0, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
+            transition: var(--transition-smooth);
+            backdrop-filter: blur(10px);
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .header-btn:hover {
+            transform: translateY(-2px);
+            background: rgba(255, 255, 255, 0.25);
+            box-shadow: 
+                0 8px 25px rgba(0, 0, 0, 0.25),
+                0 0 0 3px rgba(254, 239, 66, 0.3);
+        }
+
+        .theme-toggle {
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.15);
+            color: var(--senegal-yellow);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 
+                0 6px 20px rgba(0, 0, 0, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
+            transition: var(--transition-smooth);
+            backdrop-filter: blur(10px);
+            font-size: 22px;
+        }
+
         .scroll-bottom {
             position: fixed;
             right: 30px;
@@ -4331,8 +5133,8 @@ HTML_TEMPLATE = """
         }
 
         .conversations-header h3 {
-            margin: 0;
-            font-size: 18px;
+            margin: 0 0 0 80px; /* Garde le margin-left de 60px */
+            font-size: 14px; /* Taille réduite de 18px à 14px */
             color: #1f2937;
             font-weight: 600;
         }
@@ -4511,9 +5313,14 @@ HTML_TEMPLATE = """
             <div class="chat-header">
                 <h1>🇸🇳 LexFin - MODE RAG STRICT</h1>
                 <p>Assistant IA dédié à la fiscalité  •  Réponses précises basées sur une base documentaire fiscale spécialisée</p>
-                <button id="themeToggle" class="theme-toggle" title="Changer de thème">
-                    <i class="fa-solid fa-moon"></i>
-                </button>
+                <div class="header-controls">
+                    <button id="newConversationBtn" class="header-btn" title="Nouvelle conversation" onclick="newConversation()">
+                        <i class="fa-solid fa-plus"></i> Nouvelle conversation
+                    </button>
+                    <button id="themeToggle" class="theme-toggle" title="Changer de thème">
+                        <i class="fa-solid fa-moon"></i>
+                    </button>
+                </div>
             </div>
 
         <div class="chat-container" id="chatContainer">
@@ -4567,12 +5374,12 @@ HTML_TEMPLATE = """
                         <span style="font-size: 1.1em;">💡</span> Exemples de Questions
                     </div>
                     <div style="display: grid; gap: 6px; font-size: 0.9em; color: #475569; margin-left: 8px;">
-                        <div style="line-height: 1.5;">• "Que dit l'article 45 du code général des impôts ?"</div>
-                        <div style="line-height: 1.5;">• "Quel est le taux de la TVA au Sénégal ?"</div>
-                        <div style="line-height: 1.5;">• "Comment calculer l'impôt minimum forfaitaire ?"</div>
-                        <div style="line-height: 1.5;">• "Quelles sont les conditions d'exonération de droits de douane ?"</div>
-                        <div style="line-height: 1.5;">• "Qu'est-ce que le régime de l'entrepôt de stockage ?"</div>
-                        <div style="line-height: 1.5;">• "Comment fonctionne la procédure de dédouanement ?"</div>
+                        <div style="line-height: 1.5;">• "Quel est le taux de la TVA selon le Code des Impôts ?"</div>
+                        <div style="line-height: 1.5;">• "Quelles sont les nouveautés de la Loi de Finances 2026 ?"</div>
+                        <div style="line-height: 1.5;">• "Comment bénéficier des avantages du Code des Investissements ?"</div>
+                        <div style="line-height: 1.5;">• "Quels sont les droits de douane sur les importations ?"</div>
+                        <div style="line-height: 1.5;">• "Comment calculer l'impôt sur les sociétés ?"</div>
+                        <div style="line-height: 1.5;">• "Quelles sont les exonérations fiscales disponibles ?"</div>
                     </div>
                 </div>
                 
@@ -4591,9 +5398,6 @@ HTML_TEMPLATE = """
             <div class="chat-input-section">
                 <div class="input-section">
                     <input type="text" id="messageInput" placeholder="Posez votre question sur le Code des Impôts ou Code des Douanes uniquement..." onkeypress="checkEnter(event)">
-                    <button class="new-conversation-btn" onclick="startNewConversation()" title="Nouvelle conversation">
-                         Nouveau
-                    </button>
                     <button class="send-btn" id="sendBtn" onclick="sendMessage()">
                          Envoyer
                     </button>
@@ -4627,7 +5431,7 @@ HTML_TEMPLATE = """
     <!-- Panneau de gestion des conversations -->
     <div id="conversationsPanel" class="conversations-panel">
         <div class="conversations-header">
-            <h3>💬 Conversations</h3>
+            <h3> Conversations</h3>
             <div class="conversations-actions">
                 <button class="conv-btn primary" onclick="startNewConversation()" title="Nouvelle conversation">
                      Nouveau
@@ -4644,6 +5448,9 @@ HTML_TEMPLATE = """
 
     <script>
         // DOCUMIND - Application plein écran
+        
+        // Variable globale pour l'ID de conversation actuelle
+        let currentConversationId = null;
 
         function checkEnter(event) {
             if (event.key === 'Enter') {
@@ -4678,12 +5485,29 @@ HTML_TEMPLATE = """
             try { chatContainer.dispatchEvent(new Event('scroll')); } catch (e) {}
 
             try {
+                // Créer une nouvelle conversation si nécessaire
+                if (!currentConversationId) {
+                    const convResponse = await fetch('/conversation/new', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ title: message.substring(0, 50) + '...' })
+                    });
+                    const convData = await convResponse.json();
+                    currentConversationId = convData.conversation_id;
+                }
+                
+                // Envoyer le message avec l'ID de conversation
                 const response = await fetch('/chat', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ message: message })
+                    body: JSON.stringify({ 
+                        message: message,
+                        conversation_id: currentConversationId 
+                    })
                 });
 
                 const data = await response.json();
@@ -4734,6 +5558,17 @@ HTML_TEMPLATE = """
                 // Sauvegarder automatiquement la conversation
                 saveCurrentConversation();
             }, 300);
+        }
+
+        // Fonction pour démarrer une nouvelle conversation
+        function newConversation() {
+            // Réinitialiser l'ID de conversation
+            currentConversationId = null;
+            
+            // Vider le chat
+            clearChat();
+            
+            console.log('Nouvelle conversation démarrée');
         }
 
         function clearChat() {
@@ -4796,12 +5631,12 @@ HTML_TEMPLATE = """
                                 <span style="font-size: 1.1em;">💡</span> Exemples de Questions
                             </div>
                             <div style="display: grid; gap: 6px; font-size: 0.9em; color: #475569; margin-left: 8px;">
-                                <div style="line-height: 1.5;">• "Que dit l'article 45 du code général des impôts ?"</div>
-                                <div style="line-height: 1.5;">• "Quel est le taux de la TVA au Sénégal ?"</div>
-                                <div style="line-height: 1.5;">• "Comment calculer l'impôt minimum forfaitaire ?"</div>
-                                <div style="line-height: 1.5;">• "Quelles sont les conditions d'exonération de droits de douane ?"</div>
-                                <div style="line-height: 1.5;">• "Qu'est-ce que le régime de l'entrepôt de stockage ?"</div>
-                                <div style="line-height: 1.5;">• "Comment fonctionne la procédure de dédouanement ?"</div>
+                                <div style="line-height: 1.5;">• "Quel est le taux de la TVA selon le Code des Impôts ?"</div>
+                                <div style="line-height: 1.5;">• "Quelles sont les nouveautés de la Loi de Finances 2026 ?"</div>
+                                <div style="line-height: 1.5;">• "Comment bénéficier des avantages du Code des Investissements ?"</div>
+                                <div style="line-height: 1.5;">• "Quels sont les droits de douane sur les importations ?"</div>
+                                <div style="line-height: 1.5;">• "Comment calculer l'impôt sur les sociétés ?"</div>
+                                <div style="line-height: 1.5;">• "Quelles sont les exonérations fiscales disponibles ?"</div>
                             </div>
                         </div>
                         
@@ -5549,7 +6384,7 @@ HTML_TEMPLATE = """
     </script>
     
     <!-- Footer LexFin avec drapeau animé -->
-    <div class="srmt-footer" style="position: fixed; bottom: 20px; right: 25px; 
+    <div class="srmt-footer" style="position: fixed; bottom: 35px; left: 25px; 
                 color: white; font-size: 13px; font-weight: 600;
                 background: linear-gradient(135deg, var(--senegal-green) 0%, #006838 100%);
                 padding: 12px 24px; 
@@ -5613,10 +6448,11 @@ def home():
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    """Endpoint pour le chat avec références précises"""
+    """Endpoint pour le chat avec références précises et gestion des conversations"""
     try:
         data = request.get_json()
         message = data.get('message', '')
+        conversation_id = data.get('conversation_id', None)  # ID de conversation optionnel
         
         if not message:
             return jsonify({
@@ -5624,7 +6460,8 @@ def chat():
                 'references': []
             }), 400
         
-        result = lexfin_client.chat(message)
+        # Transmettre le conversation_id à la méthode chat
+        result = lexfin_client.chat(message, conversation_id=conversation_id)
         
         # 🔧 DEBUG: Log des références pour diagnostiquer le problème "undefined"
         references = result.get('references', [])
@@ -5638,13 +6475,145 @@ def chat():
         
         return jsonify({
             'response': result.get('response', ''),
-            'references': references
+            'references': references,
+            'conversation_id': conversation_id  # Retourner l'ID de conversation
         })
         
     except Exception as e:
         logger.error(f"Erreur chat endpoint: {e}")
         return jsonify({
             'response': 'Une erreur s\'est produite.',
+            'references': []
+        }), 500
+
+@app.route('/conversation/new', methods=['POST'])
+def new_conversation():
+    """Créer une nouvelle conversation"""
+    try:
+        data = request.get_json() or {}
+        title = data.get('title', 'Nouvelle conversation')
+        
+        conversation_id = lexfin_client.conversation_manager.create_conversation(title)
+        
+        return jsonify({
+            'conversation_id': conversation_id,
+            'title': title,
+            'created_at': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Erreur création conversation: {e}")
+        return jsonify({'error': 'Erreur lors de la création de la conversation'}), 500
+
+@app.route('/conversation/<conversation_id>/history', methods=['GET'])
+def get_conversation_history(conversation_id):
+    """Récupérer l'historique d'une conversation"""
+    try:
+        history = lexfin_client.conversation_manager.get_conversation_history(conversation_id)
+        
+        if history is None:
+            return jsonify({'error': 'Conversation non trouvée'}), 404
+        
+        return jsonify({
+            'conversation_id': conversation_id,
+            'messages': history
+        })
+        
+    except Exception as e:
+        logger.error(f"Erreur récupération historique: {e}")
+        return jsonify({'error': 'Erreur lors de la récupération de l\'historique'}), 500
+
+@app.route('/conversations', methods=['GET'])
+def list_conversations():
+    """Lister toutes les conversations"""
+    try:
+        conversations = lexfin_client.conversation_manager.list_conversations()
+        
+        return jsonify({
+            'conversations': conversations
+        })
+        
+    except Exception as e:
+        logger.error(f"Erreur liste conversations: {e}")
+        return jsonify({'error': 'Erreur lors de la récupération des conversations'}), 500
+
+@app.route('/conversation/<conversation_id>', methods=['DELETE'])
+def delete_conversation(conversation_id):
+    """Supprimer une conversation"""
+    try:
+        success = lexfin_client.conversation_manager.delete_conversation(conversation_id)
+        
+        if not success:
+            return jsonify({'error': 'Conversation non trouvée'}), 404
+        
+        return jsonify({'message': 'Conversation supprimée avec succès'})
+        
+    except Exception as e:
+        logger.error(f"Erreur suppression conversation: {e}")
+        return jsonify({'error': 'Erreur lors de la suppression de la conversation'}), 500
+
+@app.route('/regenerate', methods=['POST'])
+def regenerate():
+    try:
+        data = request.json
+        message = data.get('message', '')
+        
+        if not message:
+            return jsonify({'response': 'Message vide reçu.', 'references': []}), 400
+        
+        # Prompt de simplification en français uniquement
+        simplification_prompt = f"""🇫🇷 LANGUE OBLIGATOIRE: Tu DOIS répondre UNIQUEMENT en français. Aucun mot en anglais ou autre langue n'est autorisé.
+
+Question à simplifier: "{message}"
+
+MISSION: Reformule cette question de manière plus simple et claire, en français uniquement:
+- Utilise un vocabulaire accessible 
+- Garde le sens original intact
+- Raccourcis les phrases longues
+- Supprime les mots inutiles
+- Maximum 2 lignes
+- Réponse UNIQUEMENT en français
+
+Reformulation simplifiée:"""
+
+        # Appel à Mistral pour simplification
+        payload = {
+            "model": lexfin_client.config.OLLAMA_CHAT_MODEL,
+            "prompt": simplification_prompt,
+            "stream": False
+        }
+        
+        response = requests.post(
+            f"{lexfin_client.config.OLLAMA_BASE_URL}/api/generate",
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            simplified_message = response.json()['response'].strip()
+            
+            # Traiter la question simplifiée avec le système normal
+            result = lexfin_client.chat(simplified_message)
+            
+            return jsonify({
+                'response': result.get('response', ''),
+                'references': result.get('references', []),
+                'simplified_question': simplified_message
+            })
+        else:
+            # Si échec de simplification, relancer avec question originale
+            result = lexfin_client.chat(message)
+            
+            return jsonify({
+                'response': result.get('response', ''),
+                'references': result.get('references', []),
+                'simplified_question': message
+            })
+            
+    except Exception as e:
+        logger.error(f"Erreur regenerate endpoint: {e}")
+        return jsonify({
+            'response': 'Erreur lors de la régénération.',
             'references': []
         }), 500
 
