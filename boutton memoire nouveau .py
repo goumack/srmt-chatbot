@@ -3223,17 +3223,26 @@ Je suis conçu pour répondre aux questions liées au droit et à l'administrati
             }
             
             try:
-                # 🔄 MÉCANISME DE RETRY PROGRESSIF avec réduction du contexte
-                max_retries = 2
+                # 🔄 MÉCANISME DE RETRY PROGRESSIF avec réduction du contexte - OPTIMISÉ POUR PRODUCTION
+                max_retries = 3  # Plus de tentatives pour OpenShift
                 for attempt in range(max_retries + 1):
-                    # Réduire progressivement le contexte si timeout
+                    # Réduire progressivement et agressivement le contexte si timeout
                     if attempt > 0:
-                        logger.info(f"🔄 Tentative {attempt + 1}: réduction du contexte ({len(context)} chars)")
-                        # Réduire le contexte de 50% à chaque retry
+                        logger.info(f"🔄 Tentative {attempt + 1}: réduction agressive du contexte ({len(context)} chars)")
+                        # Réduction plus agressive pour éviter les timeouts OpenShift
                         context_lines = context.split('\n')
-                        max_lines = max(5, len(context_lines) // (2 ** attempt))  # Minimum 5 lignes
+                        if attempt == 1:
+                            # Premier retry: réduire de 70%
+                            max_lines = max(3, len(context_lines) // 3)
+                        elif attempt == 2:
+                            # Deuxième retry: réduire de 85%
+                            max_lines = max(2, len(context_lines) // 6)
+                        else:
+                            # Troisième retry: contexte minimal
+                            max_lines = max(1, len(context_lines) // 10)
+                        
                         context = '\n'.join(context_lines[:max_lines])
-                        logger.info(f"🔄 Contexte réduit à {len(context)} caractères")
+                        logger.info(f"🔄 Contexte réduit agressivement à {len(context)} caractères")
                         
                         # Mettre à jour le payload avec le contexte réduit
                         payload["prompt"] = prompt.replace(prompt.split("QUESTION:")[0], f"""TEXTE OFFICIEL: {context}
@@ -3244,7 +3253,7 @@ Je suis conçu pour répondre aux questions liées au droit et à l'administrati
                         response = requests.post(
                             f"{self.config.OLLAMA_BASE_URL}/api/generate",
                             json=payload,
-                            timeout=60  # Timeout réduit à 1 minute pour détecter rapidement les problèmes
+                            timeout=30  # Timeout réduit à 30s pour production OpenShift
                         )
                         
                         if response.status_code == 200:
@@ -6405,47 +6414,6 @@ HTML_TEMPLATE = """
 
     </script>
     
-    <!-- Footer LexFin avec drapeau animé -->
-    <div class="srmt-footer" style="position: fixed; bottom: 35px; left: 25px; 
-                color: white; font-size: 13px; font-weight: 600;
-                background: linear-gradient(135deg, var(--senegal-green) 0%, #006838 100%);
-                padding: 12px 24px; 
-                border-radius: 30px; 
-                backdrop-filter: blur(15px);
-                border: 2px solid rgba(254, 239, 66, 0.3);
-                box-shadow: 0 8px 28px rgba(0, 133, 63, 0.4);
-                z-index: 999;
-                transition: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-                display: flex;
-                align-items: center;
-                gap: 10px;">
-        <span style="font-size: 20px; animation: wave 2s ease-in-out infinite;">🇸🇳</span>
-        <span style="text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);">
-            Powered by <strong style="color: var(--senegal-yellow); text-shadow: 0 0 10px rgba(254, 239, 66, 0.5);">ACCEL-TECH</strong>
-        </span>
-    </div>
-    
-    <style>
-        .srmt-footer:hover {
-            transform: translateY(-4px) scale(1.05);
-            box-shadow: 0 12px 40px rgba(0, 133, 63, 0.6);
-            border-color: var(--senegal-yellow);
-        }
-        
-        @keyframes wave {
-            0%, 100% { transform: rotate(-5deg); }
-            50% { transform: rotate(5deg); }
-        }
-        
-        @media (max-width: 768px) {
-            .srmt-footer {
-                bottom: 10px;
-                right: 10px;
-                font-size: 11px;
-                padding: 8px 16px;
-            }
-        }
-    </style>
 </body>
 </html>
 """
