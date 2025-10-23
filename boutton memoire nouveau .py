@@ -3249,15 +3249,32 @@ Je suis conçu pour répondre aux questions liées au droit et à l'administrati
                         
                         if response.status_code == 200:
                             ollama_response = response.json()['response']
+                            logger.info(f"✅ Mistral réponse brute obtenue (tentative {attempt + 1})")
                             
                             # 🛡️ VÉRIFICATION ANTI-HALLUCINATION
-                            validated_response = self._validate_response_against_context(ollama_response, context, message)
+                            try:
+                                logger.info("🔍 Début validation anti-hallucination...")
+                                validated_response = self._validate_response_against_context(ollama_response, context, message)
+                                logger.info("✅ Validation anti-hallucination terminée")
+                            except Exception as validation_error:
+                                import traceback
+                                logger.error(f"❌ Erreur validation: {validation_error}")
+                                logger.error(f"📍 Traceback validation: {traceback.format_exc()}")
+                                # En cas d'erreur de validation, utiliser la réponse brute
+                                validated_response = ollama_response
                             
                             # 💬 Enregistrer la réponse dans l'historique de conversation
-                            if conversation_id and self.conversation_manager:
-                                self.conversation_manager.add_message(conversation_id, "assistant", validated_response)
+                            try:
+                                if conversation_id and self.conversation_manager:
+                                    logger.info(f"📝 Enregistrement conversation {conversation_id}")
+                                    self.conversation_manager.add_message(conversation_id, "assistant", validated_response)
+                                    logger.info("✅ Conversation enregistrée")
+                            except Exception as conv_error:
+                                import traceback
+                                logger.error(f"❌ Erreur conversation: {conv_error}")
+                                logger.error(f"📍 Traceback conversation: {traceback.format_exc()}")
                             
-                            logger.info(f"✅ Mistral réponse obtenue (tentative {attempt + 1})")
+                            logger.info(f"✅ Retour réponse finale (tentative {attempt + 1})")
                             return {
                                 "response": validated_response,
                                 "references": references
@@ -3352,12 +3369,17 @@ Votre question semble pertinente mais aucune information correspondante n'a ét�
                     }
                 
         except Exception as e:
-            logger.error(f"Erreur chat: {e}")
+            import traceback
+            logger.error(f"❌ ERREUR CHAT DÉTAILLÉE: {e}")
+            logger.error(f"📍 TRACEBACK COMPLET: {traceback.format_exc()}")
             error_response = "Une erreur s'est produite. Veuillez réessayer dans un moment."
             
             # 💬 Enregistrer la réponse d'erreur dans l'historique de conversation
-            if conversation_id and self.conversation_manager:
-                self.conversation_manager.add_message(conversation_id, "assistant", error_response)
+            try:
+                if conversation_id and self.conversation_manager:
+                    self.conversation_manager.add_message(conversation_id, "assistant", error_response)
+            except Exception as conv_error:
+                logger.error(f"❌ Erreur lors de l'enregistrement de conversation: {conv_error}")
             
             return {
                 "response": error_response,
